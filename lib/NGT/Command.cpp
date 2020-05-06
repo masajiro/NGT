@@ -834,6 +834,47 @@ using namespace std;
   }
 
   void
+  NGT::Command::reconstructCKNNG(Args &args)
+  {
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+    std::cerr << "refineANNG. Not implemented." << std::endl;
+    abort();
+#else
+    const string usage = "Usage: ngt reconstruct-cknng [-k #-of-edges] [-d delta] ranng-index build-cknng";
+
+    string inIndexPath;
+    try {
+      inIndexPath = args.get("#1");
+    } catch (...) {
+      cerr << "Input index is not specified" << endl;
+      cerr << usage << endl;
+      return;
+    }
+
+    string outIndexPath;
+    try {
+      outIndexPath = args.get("#2");
+    } catch (...) {
+      cerr << "Output index is not specified" << endl;
+      cerr << usage << endl;
+      return;
+    }
+
+    NGT::Index	index(inIndexPath);
+
+    size_t k	= args.getl("k", 0);
+    float delta	= args.getf("d", 0.2);
+    try {
+      GraphReconstructor::reconstructCKNNG(index, k, delta);
+    } catch (NGT::Exception &err) {
+      std::cerr << "Error!! Cannot refine the index. " << err.what() << std::endl;
+      return;
+    }
+    index.saveIndex(outIndexPath);
+#endif
+  }
+
+  void
   NGT::Command::repair(Args &args)
   {
     const string usage = "Usage: ng[ [-m c|r|R] repair index \n"

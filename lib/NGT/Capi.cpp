@@ -971,3 +971,17 @@ bool ngt_optimize_number_of_edges(const char *indexPath, NGTAnngEdgeOptimization
   return true;
 
 }
+
+bool ngt_reconstruct_cknng(NGTIndex index, size_t k, float delta, NGTError error)
+{
+    NGT::Index* pindex = static_cast<NGT::Index*>(index);    
+    try {
+      NGT::GraphReconstructor::reconstructCKNNG(*pindex, k, delta);
+    } catch(std::exception &err) {
+      std::stringstream ss;
+      ss << "Capi : " << __FUNCTION__ << "() : Error: " << err.what();
+      operate_error_string_(ss, error);      
+      return false;
+    }
+    return true;
+}

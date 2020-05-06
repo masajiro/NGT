@@ -888,6 +888,96 @@ class GraphReconstructor {
     }
 #endif // defined(NGT_SHARED_MEMORY_ALLOCATOR)
   }
+
+  // The source index must be a refined ANNG with k.
+  static void reconstructCKNNG(NGT::Index &index, size_t k, float delta) {
+    auto prop = static_cast<GraphIndex&>(index.getIndex()).getGraphProperty();
+    if (k == 0) {
+      if (prop.edgeSizeForCreation == 0) {
+	std::stringstream msg;
+	msg << "GraphConstructor::reconstructCKNNG: Warning: The number of edges for the index's property is invalid. " << prop.edgeSizeForCreation;
+	NGTThrowException(msg);
+      }
+      k = prop.edgeSizeForCreation;
+    }
+    if (k > prop.edgeSizeForCreation) {
+      std::cerr << "GraphReconstructor: Warning. The specified k is larger than the number of edges of the index's property. " << k << ":" << prop.edgeSizeForCreation << std::endl;
+    }
+    NGT::ObjectSpace &objectSpace = index.getObjectSpace();
+    NGT::ObjectRepository &objectRepository = objectSpace.getRepository();
+    NGT::GraphIndex &graphIndex = static_cast<GraphIndex&>(index.getIndex());
+
+    std::vector<NGT::ObjectDistances> graph;
+    extractGraph(graph, graphIndex);
+
+    for (size_t id = 1; id < graphIndex.repository.size(); id++) {
+      try {
+	NGT::GraphNode &node = *graphIndex.getNode(id);
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+	node.clear(outGraph.repository.allocator);
+#else
+	NGT::GraphNode empty;
+	node.swap(empty);
+#endif
+      } catch(NGT::Exception &err) {
+	std::cerr << "GraphReconstructor: Warning. Cannot get the node. ID=" << id << ":" << err.what() << std::endl;
+	continue;
+      }
+    }
+
+    std::vector<float> distances(graph.size());
+    for (size_t idx = 0; idx < graph.size(); idx++) {
+	NGT::ObjectDistances &node = graph[idx];
+	if (node.size() >= k) {
+	  distances[idx] = node[k - 1].distance;
+	} else {
+	  std::cerr << "GraphReconstructor::reconstructCKNNG: Warning. The edges are too few." << node.size() << ":" << k << std::endl;
+	}
+    }
+
+#ifdef _OPENMP
+#pragma omp parallel for 
+#endif
+    for (size_t idx = 0; idx < graph.size(); ++idx) {
+      NGT::ObjectID id = idx + 1;
+      try {
+	NGT::ObjectDistances &node = graph[idx];
+	size_t esize = node.size();
+	//neighborhoodGraph.objectSpace->getComparator()(*output[idxi].object, *output[idxj].object);
+	for (size_t i = 0; i < esize; ++i) {
+	  if (node[i].id - 1 >= distances.size()) {
+	    std::cerr << "GraphReconstructor::reconstructCKNNG: Warning. Invalid edge. " << node[i].id - 1 << ":" << distances.size() << std::endl;
+	  }
+	  if (node[i].distance < delta * sqrt(distances[idx] * distances[node[i].id - 1])) {
+	    NGT::GraphNode &n = *graphIndex.getNode(id);
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+	    n.push_back(node[i], outGraph.repository.allocator);
+#else
+	    n.push_back(node[i]);
+#endif
+	  }
+	}
+      } catch(NGT::Exception &err) {
+	continue;
+      }
+    }
+
+#ifdef _OPENMP
+#pragma omp parallel for 
+#endif
+    for (size_t id = 1; id < graphIndex.repository.size(); id++) {
+      try {
+	NGT::GraphNode &n = *graphIndex.getNode(id);
+	if (id % 100000 == 0) {
+	  std::cerr << "Processed " << id << std::endl;
+	}
+	std::sort(n.begin(), n.end());
+      } catch(NGT::Exception &err) {
+	continue;
+      }
+    }
+  }
+  
 };
 
 }; // NGT

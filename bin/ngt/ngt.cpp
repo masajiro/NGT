@@ -96,6 +96,8 @@ main(int argc, char **argv)
       ngt.optimizeSearchParameters(args);
     } else if (command == "refine-anng") {
       ngt.refineANNG(args);
+    } else if (command == "reconstruct-cknng") {
+      ngt.reconstructCKNNG(args);
     } else if (command == "repair") {
       ngt.repair(args);
     } else if (command == "optimize-#-of-edges") {

@@ -202,6 +202,8 @@ NGTAnngEdgeOptimizationParameter ngt_get_anng_edge_optimization_parameter();
 // The parameter should be a struct which is returned by nt_get_optimization_parameter.
 bool ngt_optimize_number_of_edges(const char *indexPath, NGTAnngEdgeOptimizationParameter parameter, NGTError error);
 
+bool ngt_reconstruct_cknng(NGTIndex index, size_t k, float delta, NGTError error);
+
 #ifdef __cplusplus
 }
 #endif

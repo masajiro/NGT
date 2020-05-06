@@ -113,6 +113,7 @@ public:
   void optimizeSearchParameters(Args &args);
   void optimizeNumberOfEdgesForANNG(Args &args);
   void refineANNG(Args &args);
+  void reconstructCKNNG(Args &args);
   void repair(Args &args);
 
   void info(Args &args);
