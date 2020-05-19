@@ -276,6 +276,9 @@ namespace NGT {
       case DistanceTypeHamming:
 	comparator = new ObjectSpaceRepository::ComparatorHammingDistance(ObjectSpace::getPaddedDimension(), ObjectRepository::allocator);
 	break;
+      case DistanceTypeJaccard:
+	comparator = new ObjectSpaceRepository::ComparatorJaccardDistance(ObjectSpace::getPaddedDimension(), ObjectRepository::allocator);
+	break;
       case DistanceTypeAngle:
 	comparator = new ObjectSpaceRepository::ComparatorAngleDistance(ObjectSpace::getPaddedDimension(), ObjectRepository::allocator);
 	break;
@@ -335,8 +338,6 @@ namespace NGT {
 
     void append(const float *data, size_t dataSize) { ObjectRepository::append(data, dataSize); }
     void append(const double *data, size_t dataSize) { ObjectRepository::append(data, dataSize); }
-
-    
 
 
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
