@@ -115,6 +115,7 @@ public:
   void refineANNG(Args &args);
   void reconstructCKNNG(Args &args);
   void repair(Args &args);
+  void exportGraph(Args &args);
 
   void info(Args &args);
   void setDebugLevel(int level) { debugLevel = level; }
