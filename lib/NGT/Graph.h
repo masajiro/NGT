@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -292,7 +293,8 @@ class NeighborhoodGraph {
     GraphTypeIANNG  = 5, // Improved ANNG
     GraphTypeDNNG   = 6,
     GraphTypeRANNG  = 7,
-    GraphTypeRIANNG = 8
+    GraphTypeRIANNG = 8,
+    GraphTypeSNNG   = 9
   };
 
   enum SeedType {
@@ -596,7 +598,8 @@ class NeighborhoodGraph {
       truncationThreshold        = 0;
       edgeSizeForCreation        = NGT_CREATION_EDGE_SIZE;
       edgeSizeForSearch          = 0;
-      edgeSizeLimitForCreation   = 5;
+      minEdgeSizeForCreation     = 10;
+      maxEdgeSizeForCreation     = 300;
       insertionRadiusCoefficient = NGT_INSERTION_EXPLORATION_COEFFICIENT;
       seedSize                   = NGT_SEED_SIZE;
       seedType                   = SeedTypeNone;
@@ -610,12 +613,15 @@ class NeighborhoodGraph {
       incomingEdge               = 80;
       epsilonType                = EpsilonTypeNone;
       identicalObjectEdgeType    = IdenticalObjectEdgeTypeNone;
+      searchMultiplier           = 0.0;
+      searchTraceRatio           = 0.0f;
     }
     void clear() {
       truncationThreshold        = -1;
       edgeSizeForCreation        = -1;
       edgeSizeForSearch          = -1;
-      edgeSizeLimitForCreation   = -1;
+      minEdgeSizeForCreation     = -1;
+      maxEdgeSizeForCreation     = -1;
       insertionRadiusCoefficient = -1;
       seedSize                   = -1;
       seedType                   = SeedTypeNone;
@@ -629,6 +635,8 @@ class NeighborhoodGraph {
       incomingEdge               = -1;
       epsilonType                = -1;
       identicalObjectEdgeType    = -1;
+      searchMultiplier           = -1.0;
+      searchTraceRatio           = -1.0f;
     }
     void set(NGT::Property &prop);
     void get(NGT::Property &prop);
@@ -637,8 +645,8 @@ class NeighborhoodGraph {
       p.set("IncrimentalEdgeSizeLimitForTruncation", truncationThreshold);
       p.set("EdgeSizeForCreation", edgeSizeForCreation);
       p.set("EdgeSizeForSearch", edgeSizeForSearch);
-      p.set("EdgeSizeLimitForCreation", edgeSizeLimitForCreation);
-      assert(insertionRadiusCoefficient >= 1.0);
+      p.set("MinEdgeSizeForCreation", minEdgeSizeForCreation);
+      p.set("MaxEdgeSizeForCreation", maxEdgeSizeForCreation);
       p.set("EpsilonForCreation", insertionRadiusCoefficient - 1.0);
       p.set("BatchSizeForCreation", batchSizeForCreation);
       p.set("SeedSize", seedSize);
@@ -654,6 +662,7 @@ class NeighborhoodGraph {
       case NeighborhoodGraph::GraphTypeBKNNG: p.set("GraphType", "BKNNG"); break;
       case NeighborhoodGraph::GraphTypeONNG: p.set("GraphType", "ONNG"); break;
       case NeighborhoodGraph::GraphTypeIANNG: p.set("GraphType", "IANNG"); break;
+      case NeighborhoodGraph::GraphTypeSNNG: p.set("GraphType", "SNNG"); break;
       case NeighborhoodGraph::GraphTypeRANNG: p.set("GraphType", "RANNG"); break;
       case NeighborhoodGraph::GraphTypeRIANNG: p.set("GraphType", "RIANNG"); break;
       default:
@@ -685,13 +694,16 @@ class NeighborhoodGraph {
                   << std::endl;
         abort();
       }
+      p.set("SearchMultiplier", searchMultiplier);
+      p.set("SearchTraceRatio", searchTraceRatio);
     }
     void importProperty(NGT::PropertySet &p) {
       setDefault();
       truncationThreshold        = p.getl("IncrimentalEdgeSizeLimitForTruncation", truncationThreshold);
       edgeSizeForCreation        = p.getl("EdgeSizeForCreation", edgeSizeForCreation);
       edgeSizeForSearch          = p.getl("EdgeSizeForSearch", edgeSizeForSearch);
-      edgeSizeLimitForCreation   = p.getl("EdgeSizeLimitForCreation", edgeSizeLimitForCreation);
+      minEdgeSizeForCreation     = p.getl("MinEdgeSizeForCreation", minEdgeSizeForCreation);
+      maxEdgeSizeForCreation     = p.getl("MaxEdgeSizeForCreation", maxEdgeSizeForCreation);
       insertionRadiusCoefficient = p.getf("EpsilonForCreation", insertionRadiusCoefficient);
       insertionRadiusCoefficient += 1.0;
       batchSizeForCreation     = p.getl("BatchSizeForCreation", batchSizeForCreation);
@@ -713,6 +725,8 @@ class NeighborhoodGraph {
           graphType = NeighborhoodGraph::GraphTypeONNG;
         else if (it->second == "IANNG")
           graphType = NeighborhoodGraph::GraphTypeIANNG;
+        else if (it->second == "SNNG")
+          graphType = NeighborhoodGraph::GraphTypeSNNG;
         else if (it->second == "RANNG")
           graphType = NeighborhoodGraph::GraphTypeRANNG;
         else if (it->second == "RIANNG")
@@ -769,12 +783,15 @@ class NeighborhoodGraph {
       } else {
         identicalObjectEdgeType = IdenticalObjectEdgeTypeNone;
       }
+      searchMultiplier = p.getf("SearchMultiplier", searchMultiplier);
+      searchTraceRatio = p.getf("SearchTraceRatio", searchTraceRatio);
     }
     friend std::ostream &operator<<(std::ostream &os, const Property &p) {
       os << "truncationThreshold=" << p.truncationThreshold << std::endl;
       os << "edgeSizeForCreation=" << p.edgeSizeForCreation << std::endl;
       os << "edgeSizeForSearch=" << p.edgeSizeForSearch << std::endl;
-      os << "edgeSizeLimitForCreation=" << p.edgeSizeLimitForCreation << std::endl;
+      os << "minEdgeSizeForCreation=" << p.minEdgeSizeForCreation << std::endl;
+      os << "maxEdgeSizeForCreation=" << p.maxEdgeSizeForCreation << std::endl;
       os << "insertionRadiusCoefficient=" << p.insertionRadiusCoefficient << std::endl;
       os << "insertionRadiusCoefficient=" << p.insertionRadiusCoefficient << std::endl;
       os << "seedSize=" << p.seedSize << std::endl;
@@ -788,13 +805,16 @@ class NeighborhoodGraph {
       os << "incomingEdge=" << p.incomingEdge << std::endl;
       os << "epsilonType=" << p.epsilonType << std::endl;
       os << "identicalObjectEdgeType=" << p.identicalObjectEdgeType << std::endl;
+      os << "searchMultiplier=" << p.searchMultiplier << std::endl;
+      os << "searchTraceRatio=" << p.searchTraceRatio << std::endl;
       return os;
     }
 
     int16_t truncationThreshold;
     int16_t edgeSizeForCreation;
     int16_t edgeSizeForSearch;
-    int16_t edgeSizeLimitForCreation;
+    int16_t minEdgeSizeForCreation;
+    int16_t maxEdgeSizeForCreation;
     double insertionRadiusCoefficient;
     int16_t seedSize;
     SeedType seedType;
@@ -808,6 +828,8 @@ class NeighborhoodGraph {
     int16_t incomingEdge;
     int16_t epsilonType;
     int16_t identicalObjectEdgeType;
+    float searchMultiplier;
+    float searchTraceRatio;
   };
 
   NeighborhoodGraph() : objectSpace(0) {
@@ -835,6 +857,7 @@ class NeighborhoodGraph {
     case GraphTypeIANNG:
     case GraphTypeRIANNG: insertIANNGNode(id, objects); break;
     case GraphTypeONNG: insertONNGNode(id, objects); break;
+    case GraphTypeSNNG: insertSNNGNode(id, objects); break;
     case GraphTypeKNNG: insertKNNGNode(id, objects); break;
     case GraphTypeBKNNG: insertBKNNGNode(id, objects); break;
     case GraphTypeNone: NGTThrowException("NGT::insertNode: GraphType is not specified."); break;
@@ -1115,6 +1138,119 @@ class NeighborhoodGraph {
     }
     repository.insert(id, results);
   }
+  void insertSNNGNode(ObjectID id, ObjectDistances &results) {
+    auto &objectSpace = getObjectSpace();
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR) || defined(DISTANCE_REDUCTION_WITHOUT_EDGE)
+    auto &comparator = objectSpace.getComparator();
+#endif
+    NGT::ObjectRepository &repo = objectSpace.getRepository();
+#ifndef NGT_SHARED_MEMORY_ALLOCATOR
+    const size_t prefetchSize   = objectSpace.getByteSizeOfObject();
+    const size_t prefetchOffset = 4;
+#endif
+    size_t lowerBoundNumEdges =
+        property.minEdgeSizeForCreation == 0 ? property.edgeSizeForCreation : property.minEdgeSizeForCreation;
+    size_t upperBoundNumEdges = property.maxEdgeSizeForCreation;
+    {
+      std::vector<uint8_t> remove(results.size(), 0);
+      std::vector<uint8_t> objectEmpty(results.size());
+      for (size_t i = 0; i < results.size(); ++i) {
+        objectEmpty[i] = objectSpace.getRepository().isEmpty(results[i].id) ? 1 : 0;
+      }
+      size_t removeCount = 0;
+#ifndef NGT_SHARED_MEMORY_ALLOCATOR
+      const size_t objectDimension = objectSpace.getDimension();
+      std::vector<const void *> cachedObjectVectors(results.size());
+      for (size_t i = 0; i < results.size(); ++i) {
+        if (!objectEmpty[i]) {
+          cachedObjectVectors[i] = static_cast<const void *>(repo.get(results[i].id)->getPointer());
+        } else {
+          cachedObjectVectors[i] = nullptr;
+        }
+      }
+#endif
+      for (size_t i1 = 0; i1 < results.size(); ++i1) {
+        auto &e1 = results[i1];
+        (void)e1;
+        if (objectEmpty[i1]) {
+          continue;
+        }
+        if (remove[i1]) {
+          continue;
+        }
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+        NGT::PersistentObject &object1 = *repo.get(e1.id);
+#else
+        const void *object1Vector = cachedObjectVectors[i1];
+#endif
+#if defined(TRACE) || defined(DISTANCE_REDUCTION_WITHOUT_EDGE)
+        GraphNode &node1 = *getNode(e1.id);
+#endif
+        for (size_t i2 = i1 + 1; i2 < results.size(); ++i2) {
+          auto &e2 = results[i2];
+          if (objectEmpty[i2]) {
+            continue;
+          }
+          if (remove[i2]) {
+            continue;
+          }
+          {
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+            NGT::PersistentObject &object2 = *repo.get(e2.id);
+            float d                        = comparator(object1, object2);
+#else
+            size_t prefetchIndex = i2 + prefetchOffset;
+            if (prefetchIndex < results.size() && cachedObjectVectors[prefetchIndex] != nullptr) {
+              MemoryCache::prefetch(const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(
+                                        cachedObjectVectors[prefetchIndex])),
+                                    prefetchSize);
+            }
+            float d =
+                objectSpace.getPrimitiveComparator()(object1Vector, cachedObjectVectors[i2], objectDimension);
+#endif
+            if (d < e2.distance) {
+              remove[i2] = 1;
+              removeCount++;
+            }
+          }
+        }
+      }
+      ObjectDistances removedResults;
+      removedResults.reserve(results.size() - removeCount);
+      for (size_t ei = 0; ei < results.size(); ++ei) {
+        if (removedResults.size() >= static_cast<size_t>(property.edgeSizeForCreation)) {
+          break;
+        }
+        if (remove[ei] == 0) {
+          removedResults.emplace_back(results[ei]);
+        }
+      }
+      repository.insert(id, removedResults);
+    }
+
+    for (ObjectDistances::iterator ri = results.begin(); ri != results.end(); ri++) {
+      assert(id != (*ri).id);
+      GraphNode &node = *getNode((*ri).id);
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+      if (!node.empty() && (node.size() >= lowerBoundNumEdges) &&
+          (node.back(repository.allocator).distance <= (*ri).distance)) {
+        continue;
+      }
+#else
+      if (!node.empty() && (node.size() >= lowerBoundNumEdges) && (node.back().distance <= (*ri).distance)) {
+        continue;
+      }
+#endif
+      addEdge((*ri).id, id, (*ri).distance);
+      if (upperBoundNumEdges > 0 && node.size() > static_cast<size_t>(upperBoundNumEdges)) {
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+        node.resize(upperBoundNumEdges, repository.getAllocator());
+#else
+        node.resize(upperBoundNumEdges);
+#endif
+      }
+    }
+  }
 
   void removeEdgesReliably(ObjectID id);
 
@@ -1156,6 +1292,8 @@ class NeighborhoodGraph {
   }
 
   void search(NGT::SearchContainer &sc, ObjectDistances &seeds);
+
+  void searchWithTrace(NGT::SearchContainer &sc, ObjectDistances &seeds);
 
 #ifdef NGT_GRAPH_READ_ONLY_GRAPH
   template <typename COMPARATOR, typename CHECK_LIST>

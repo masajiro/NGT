@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2018 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -594,8 +595,12 @@ public:
     defaultRadius = FLT_MAX;
     defaultResultExpansion = 3.0;
     defaultEdgeSize = 0; // not used
+    defaultIdBitShift = 0;
 #ifdef NGTQG_PROBE
     defaultProbe = 10;
+#endif
+#ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
+    defaultDistanceLutScaleFactor = 2.5;
 #endif
     if (logDisabled) {
       NGT::Index::disableLog();
@@ -625,8 +630,12 @@ public:
       sc.setEpsilon(epsilon);			// set exploration coefficient.
       sc.setResultExpansion(resultExpansion);	// set result expansion.
       sc.setEdgeSize(edgeSize);			// if maxEdge is minus, the specified value in advance is used.
+      sc.idBitShift = defaultIdBitShift;
 #ifdef NGTQG_PROBE
       sc.setProbe(defaultProbe);
+#endif
+#ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
+      sc.setDistanceLutScaleFactor(defaultDistanceLutScaleFactor);
 #endif
       NGT::ObjectDistances objects;
       sc.setResults(&objects);
@@ -682,6 +691,10 @@ public:
 #ifdef NGTQG_PROBE
    , size_t probe
 #endif
+   , long idBitShift
+#ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
+   , float distanceLutScaleFactor
+#endif
   ) {
     defaultNumOfSearchObjects = numOfSearchObjects > 0 ? numOfSearchObjects : defaultNumOfSearchObjects;
     defaultEpsilon	      = epsilon > -1.0 ? epsilon : defaultEpsilon;
@@ -690,6 +703,10 @@ public:
     defaultEdgeSize	      = edgeSize >= -2 ? edgeSize : defaultEdgeSize;
 #ifdef NGTQG_PROBE
     defaultProbe              = probe > 0 ? probe : defaultProbe;
+#endif
+    defaultIdBitShift         = idBitShift >= 0 ? static_cast<size_t>(idBitShift) : defaultIdBitShift;
+#ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
+    defaultDistanceLutScaleFactor = distanceLutScaleFactor > 0 ? distanceLutScaleFactor : defaultDistanceLutScaleFactor;
 #endif
   }
 
@@ -702,8 +719,12 @@ public:
   float		defaultRadius;
   float		defaultResultExpansion;
   int64_t	defaultEdgeSize;
+  size_t	defaultIdBitShift;
 #ifdef NGTQG_PROBE
   size_t        defaultProbe;
+#endif
+#ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
+  float         defaultDistanceLutScaleFactor;
 #endif
 };
 
@@ -1291,10 +1312,18 @@ PYBIND11_MODULE(ngtpy, m) {
            py::arg("result_expansion") = -FLT_MAX,
 #ifdef NGTQG_PROBE
            py::arg("edge_size") = INT_MIN,
-           py::arg("num_of_probes") = 0
+           py::arg("num_of_probes") = 0,
+           py::arg("id_bit_shift") = -1
+#ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
+           , py::arg("distance_lut_scale_factor") = -FLT_MAX
+#endif
            )
 #else
-           py::arg("edge_size") = INT_MIN
+           py::arg("edge_size") = INT_MIN,
+           py::arg("id_bit_shift") = -1
+#ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
+           , py::arg("distance_lut_scale_factor") = -FLT_MAX
+#endif
            )
 #endif
       // set_defaults is deprecated
@@ -1305,10 +1334,18 @@ PYBIND11_MODULE(ngtpy, m) {
            py::arg("result_expansion") = -FLT_MAX,
 #ifdef NGTQG_PROBE
            py::arg("edge_size") = INT_MIN,
-           py::arg("num_of_probes") = 0
-           );
+           py::arg("num_of_probes") = 0,
+           py::arg("id_bit_shift") = -1
+#ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
+           , py::arg("distance_lut_scale_factor") = -FLT_MAX
+#endif
+           )
 #else
-           py::arg("edge_size") = INT_MIN
+           py::arg("edge_size") = INT_MIN,
+           py::arg("id_bit_shift") = -1
+#ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
+           , py::arg("distance_lut_scale_factor") = -FLT_MAX
+#endif
            );
 #endif
 

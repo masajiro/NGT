@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,7 +27,8 @@ void NeighborhoodGraph::Property::set(NGT::Property &prop) {
   if (prop.truncationThreshold != -1) truncationThreshold = prop.truncationThreshold;
   if (prop.edgeSizeForCreation != -1) edgeSizeForCreation = prop.edgeSizeForCreation;
   if (prop.edgeSizeForSearch != -1) edgeSizeForSearch = prop.edgeSizeForSearch;
-  if (prop.edgeSizeLimitForCreation != -1) edgeSizeLimitForCreation = prop.edgeSizeLimitForCreation;
+  if (prop.minEdgeSizeForCreation != -1) minEdgeSizeForCreation = prop.minEdgeSizeForCreation;
+  if (prop.maxEdgeSizeForCreation != -1) maxEdgeSizeForCreation = prop.maxEdgeSizeForCreation;
   if (prop.insertionRadiusCoefficient != -1) insertionRadiusCoefficient = prop.insertionRadiusCoefficient;
   if (prop.seedSize != -1) seedSize = prop.seedSize;
   if (prop.seedType != SeedTypeNone) seedType = prop.seedType;
@@ -40,13 +42,16 @@ void NeighborhoodGraph::Property::set(NGT::Property &prop) {
   if (prop.incomingEdge != -1) incomingEdge = prop.incomingEdge;
   if (prop.epsilonType != -1) epsilonType = prop.epsilonType;
   if (prop.identicalObjectEdgeType != -1) identicalObjectEdgeType = prop.identicalObjectEdgeType;
+  if (prop.searchMultiplier != -1.0) searchMultiplier = prop.searchMultiplier;
+  if (prop.searchTraceRatio != -1.0f) searchTraceRatio = prop.searchTraceRatio;
 }
 
 void NeighborhoodGraph::Property::get(NGT::Property &prop) {
   prop.truncationThreshold        = truncationThreshold;
   prop.edgeSizeForCreation        = edgeSizeForCreation;
   prop.edgeSizeForSearch          = edgeSizeForSearch;
-  prop.edgeSizeLimitForCreation   = edgeSizeLimitForCreation;
+  prop.minEdgeSizeForCreation     = minEdgeSizeForCreation;
+  prop.maxEdgeSizeForCreation     = maxEdgeSizeForCreation;
   prop.insertionRadiusCoefficient = insertionRadiusCoefficient;
   prop.seedSize                   = seedSize;
   prop.seedType                   = seedType;
@@ -60,6 +65,8 @@ void NeighborhoodGraph::Property::get(NGT::Property &prop) {
   prop.incomingEdge               = incomingEdge;
   prop.epsilonType                = epsilonType;
   prop.identicalObjectEdgeType    = identicalObjectEdgeType;
+  prop.searchMultiplier           = searchMultiplier;
+  prop.searchTraceRatio           = searchTraceRatio;
 }
 
 #ifdef NGT_GRAPH_READ_ONLY_GRAPH
@@ -1023,6 +1030,166 @@ void NeighborhoodGraph::search(NGT::SearchContainer &sc, ObjectDistances &seeds)
   } else {
     sc.workingResult = std::move(results);
   }
+}
+
+void NeighborhoodGraph::searchWithTrace(NGT::SearchContainer &sc, ObjectDistances &seeds) {
+  size_t overflowCount = 0;
+  if (property.searchTraceRatio > 0.0f && sc.size > 0) {
+    overflowCount = static_cast<size_t>(std::ceil(static_cast<float>(sc.size) * property.searchTraceRatio));
+  }
+
+  if (sc.explorationCoefficient == 0.0) {
+    sc.explorationCoefficient = NGT_EXPLORATION_COEFFICIENT;
+  }
+
+  size_t edgeSize = getEdgeSize(sc);
+
+#if defined(NGT_GRAPH_CHECK_BITSET)
+  DistanceCheckedSet distanceChecked(0);
+#elif defined(NGT_GRAPH_CHECK_BOOLEANSET)
+  DistanceCheckedSet distanceChecked(repository.size());
+#elif defined(NGT_GRAPH_CHECK_TRICKYBOOLEANSET)
+  DistanceCheckedSet &distanceChecked = *sc.distanceChecked;
+  distanceChecked.clear();
+#elif defined(NGT_GRAPH_CHECK_HASH_BASED_BOOLEAN_SET)
+  DistanceCheckedSet distanceChecked(repository.size());
+#elif defined(NGT_GRAPH_CHECK_ARRAY)
+  DistanceCheckedSet distanceChecked = new bool[repository.size()]();
+  memset(&distanceChecked[0], 0, sizeof(bool) * repository.size());
+#elif defined(NGT_GRAPH_CHECK_VECTOR)
+  DistanceCheckedSet distanceChecked(repository.size());
+#else
+  DistanceCheckedSet distanceChecked;
+#endif
+
+  NGT::ObjectSpace::Comparator *comparatorPtr = 0;
+  if (sc.insertion) {
+    comparatorPtr = &objectSpace->getComparator();
+  } else {
+    comparatorPtr = &objectSpace->getComparatorForSearch();
+  }
+  NGT::ObjectSpace::Comparator &comparator = *comparatorPtr;
+
+  setupDistances(sc, seeds, comparator);
+
+  NGT::HeapCandidateObjects<ObjectDistance> candidates;
+  float resultExpansion = 1.0f;
+  if (overflowCount > 0) {
+    resultExpansion += static_cast<float>(overflowCount) / static_cast<float>(sc.size);
+  }
+  candidates.reset(static_cast<uint16_t>(sc.size - overflowCount), resultExpansion);
+  std::sort(seeds.begin(), seeds.end());
+  for (ObjectDistances::iterator si = seeds.begin(); si != seeds.end(); ++si) {
+    if ((*si).distance == std::numeric_limits<float>::max()) continue;
+    distanceChecked.insert((*si).id);
+    candidates.push(*si);
+  }
+
+  Distance explorationRadius = sc.explorationCoefficient * sc.radius;
+
+  ObjectRepository &objectRepository = getObjectRepository();
+  const size_t prefetchSize          = objectSpace->getPrefetchSize();
+  const size_t prefetchOffset        = objectSpace->getPrefetchOffset();
+
+  ObjectDistance result;
+  ObjectDistance target;
+  ObjectDistance *neighborptr;
+  ObjectDistance *neighborendptr;
+
+  while (true) {
+    if (!candidates.pop(target)) break;
+    if (target.distance > explorationRadius) break;
+
+    GraphNode *neighbors = 0;
+    assert(target.id != 0);
+    try {
+      neighbors = getNode(target.id);
+    } catch (Exception &err) {
+      cerr << "Graph::searchWithTrace: Warning. " << err.what() << "  ID=" << target.id << endl;
+      continue;
+    }
+
+    if (neighbors->size() == 0) {
+      continue;
+    }
+
+    size_t neighborSize = neighbors->size() < edgeSize ? neighbors->size() : edgeSize;
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+    neighborptr = &(*neighbors).at(0, repository.allocator);
+#else
+    neighborptr = &(*neighbors)[0];
+#endif
+    neighborendptr = neighborptr + neighborSize;
+
+    size_t poft = prefetchOffset < neighborSize ? prefetchOffset : neighborSize;
+    for (size_t i = 0; i < poft; i++) {
+      if (!distanceChecked[(*(neighborptr + i)).id]) {
+        if (objectRepository.isEmpty((*(neighborptr + i)).id)) continue;
+        unsigned char *ptr = reinterpret_cast<unsigned char *>(objectRepository.get((*(neighborptr + i)).id));
+        MemoryCache::prefetch(ptr, prefetchSize);
+      }
+    }
+
+    for (; neighborptr < neighborendptr; ++neighborptr) {
+      if ((neighborptr + prefetchOffset < neighborendptr) &&
+          !distanceChecked[(*(neighborptr + prefetchOffset)).id]) {
+        if (objectRepository.isEmpty((*(neighborptr + prefetchOffset)).id)) continue;
+        unsigned char *ptr =
+            reinterpret_cast<unsigned char *>(objectRepository.get((*(neighborptr + prefetchOffset)).id));
+        MemoryCache::prefetch(ptr, prefetchSize);
+      }
+      sc.visitCount++;
+
+      ObjectDistance &neighbor = *neighborptr;
+      if (distanceChecked[neighbor.id]) continue;
+      distanceChecked.insert(neighbor.id);
+
+      assert(neighbor.id != 0);
+      if (objectRepository.isEmpty(neighbor.id)) {
+        cerr << "Graph::searchWithTrace: Warning! The destination of the edge does not exist."
+             << " Node ID=" << target.id << " ID=" << neighbor.id << std::endl;
+        continue;
+      }
+
+      Distance distance = comparator(sc.object, *objectRepository.get(neighbor.id));
+      sc.distanceComputationCount++;
+
+      if (distance <= explorationRadius) {
+        result.set(neighbor.id, distance);
+        if (candidates.push(result)) {
+          sc.radius         = candidates.getMaxDistance();
+          explorationRadius = sc.explorationCoefficient * sc.radius;
+        }
+      }
+    }
+  }
+
+  ObjectDistances rawResults;
+  int maxPossible = static_cast<int>(sc.size) + static_cast<int>(overflowCount);
+
+  rawResults.resize(maxPossible);
+#ifdef NGT_X86SIMDSORT
+  size_t n = candidates.getSortedObjectsBySimd(rawResults.data(), static_cast<size_t>(maxPossible));
+#else
+  size_t n = candidates.getSortedObjectsBySort(rawResults.data(), static_cast<size_t>(maxPossible));
+#endif
+  rawResults.resize(n);
+
+  if (sc.resultIsAvailable()) {
+    ObjectDistances &qresults = sc.getResult();
+    qresults.clear();
+    qresults = rawResults;
+  } else {
+    sc.workingResult.clear();
+    for (auto &r : rawResults) {
+      sc.workingResult.push(r);
+    }
+    while (sc.workingResult.size() > static_cast<size_t>(sc.size) + overflowCount)
+      sc.workingResult.pop();
+  }
+#ifdef NGT_GRAPH_CHECK_ARRAY
+  delete[] distanceChecked;
+#endif
 }
 
 void NeighborhoodGraph::removeEdgesReliably(ObjectID id) {

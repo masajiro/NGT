@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -185,10 +186,9 @@ class Command {
   void rebuild(Args &args);
   void preprocessForPQ(Args &args);
   void constructQgGraph(Args &args);
-#ifdef NGT_FOREST
-  void constructForest(NGT::Args &args);
+#if defined(NGT_FOREST) || defined(NGT_ADVANCED_FOREST)
+  void buildForest(NGT::Args &args);
 #endif
-
   void info(Args &args);
   void setDebugLevel(int level) { debugLevel = level; }
   int getDebugLevel() { return debugLevel; }

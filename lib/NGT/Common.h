@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,12 +29,15 @@
 #include <fstream>
 #include <cassert>
 #include <cstdlib>
+#include <cstring>
+#include <cstdio>
 #include <cmath>
 #include <cfloat>
 #include <climits>
 #include <iomanip>
 #include <algorithm>
 #include <typeinfo>
+#include <type_traits>
 #include <limits>
 
 #include <execinfo.h>
@@ -44,6 +48,9 @@
 #endif
 
 #include "NGT/defines.h"
+#if defined(NGT_X86SIMDSORT) || defined(NGTQG_X86SIMDSORT)
+#include "x86simdsort.h"
+#endif
 #include "NGT/SharedMemoryAllocator.h"
 
 #ifdef NGT_HALF_FLOAT
@@ -347,6 +354,11 @@ class Args : public std::map<std::string, std::string> {
 class Timer {
  public:
   Timer() { reset(); }
+
+  static inline bool hmsFormat = true;
+  static void setFloatFormat() { hmsFormat = false; }
+  static void setHMSFormat() { hmsFormat = true; }
+
   void reset() {
     time  = 0;
     ntime = 0;
@@ -389,7 +401,20 @@ class Timer {
   }
 
   static void show(std::ostream &os, double time) {
-    if (time < 1.0) {
+    if (hmsFormat && time >= 60.0) {
+      int totalSec = static_cast<int>(time);
+      int h        = totalSec / 3600;
+      int m        = (totalSec % 3600) / 60;
+      int s        = totalSec % 60;
+      char buf[32];
+      if (h > 0) {
+        snprintf(buf, sizeof(buf), "%d:%02d:%02d", h, m, s);
+        os << buf << " (h:m:s)";
+      } else {
+        snprintf(buf, sizeof(buf), "%d:%02d", m, s);
+        os << buf << " (m:s)";
+      }
+    } else if (time < 1.0) {
       time *= 1000.0;
       os << std::setprecision(6) << time << " (ms)";
     } else if (time < 60.0) {
@@ -475,7 +500,8 @@ class Timers {
                 });
     }
     for (auto i = ts.begin(); i != ts.end(); ++i) {
-      os << (*i).second.first << "\t" << (*i).second.second << "\t" << (*i).first << std::endl;
+      os << ((*i).second.second.time * 100.0 / total) << " %\t" << (*i).second.second << "\t"
+         << (*i).second.first << "\t" << (*i).first << std::endl;
     }
     os << "Total time=";
     Timer::show(os, total);
@@ -1021,7 +1047,7 @@ class BooleanSet {
   std::vector<uint64_t> bitvec;
   uint64_t size;
 };
-
+#if 1
 template <typename TYPE = uint8_t> class BooleanVectorByEpoch {
  public:
   BooleanVectorByEpoch(size_t s = 0x100000) {
@@ -1034,7 +1060,7 @@ template <typename TYPE = uint8_t> class BooleanVectorByEpoch {
   ~BooleanVectorByEpoch() { delete[] array; }
   void clear() { memset(array, 0, size * sizeof(TYPE)); };
   void reset() {
-    constexpr size_t max = sizeof(TYPE) * 0x100 - 1;
+    constexpr TYPE max = std::numeric_limits<TYPE>::max();
     if (epoch == max) {
       clear();
       epoch = 0;
@@ -1043,8 +1069,8 @@ template <typename TYPE = uint8_t> class BooleanVectorByEpoch {
   }
   bool visit(uint32_t id) {
     id &= mask;
-    bool stat = (array[id] == epoch);
-    array[id] = epoch;
+    const bool stat = (array[id] == epoch);
+    array[id]       = epoch;
     return stat;
   };
   TYPE *array;
@@ -1052,6 +1078,39 @@ template <typename TYPE = uint8_t> class BooleanVectorByEpoch {
   size_t size;
   size_t mask;
 };
+#else
+template <typename TYPE = uint8_t> class BooleanVectorByEpoch {
+ public:
+  BooleanVectorByEpoch(size_t s = 0x100000) {
+    size  = 1u << (32 - __builtin_clz(s - 1));
+    array = new TYPE[size]();
+    epoch = 0;
+    mask  = size - 1;
+  }
+  ~BooleanVectorByEpoch() { delete[] array; }
+  inline void clear() { memset(array, 0, size * sizeof(TYPE)); }
+  inline void reset() {
+    constexpr TYPE max = std::numeric_limits<TYPE>::max();
+    if (__builtin_expect(epoch == max, 0)) {
+      clear();
+      epoch = 0;
+    }
+    ++epoch;
+  }
+  __attribute__((always_inline)) inline bool visit(uint32_t id) {
+    TYPE &e         = array[id & mask];
+    const bool stat = (e == epoch);
+    e               = epoch;
+    return stat;
+  }
+
+ private:
+  TYPE *array;
+  TYPE epoch = 1;
+  uint32_t mask;
+  uint32_t size;
+};
+#endif
 
 class PropertySet : public std::map<std::string, std::string> {
  public:
@@ -2820,6 +2879,16 @@ template <typename T = detail::CandidateObject> class HeapCandidateObjects {
     bool operator()(const T &a, const T &b) const { return a.distance < b.distance; }
   };
 
+  struct CompareByDistanceAsc {
+    bool operator()(const T &a, const T &b) const {
+      if constexpr (std::is_same_v<T, ObjectDistance>) {
+        return a < b;
+      } else {
+        return a.distance < b.distance;
+      }
+    }
+  };
+
  private:
   std::vector<T> topKResults;
 
@@ -2831,8 +2900,19 @@ template <typename T = detail::CandidateObject> class HeapCandidateObjects {
   uint16_t capacity;
   size_t expandedResultsCapacity;
   float resultExpansion;
-  uint16_t lastPoppedDistance;
-  uint16_t cachedMaxDistance;
+  using DistanceType = decltype(T().distance);
+  static constexpr bool isX86SimdSortable() {
+#if defined(NGT_X86SIMDSORT) || defined(NGTQG_X86SIMDSORT)
+    using D = DistanceType;
+    return std::is_same_v<D, float> || std::is_same_v<D, double> || std::is_same_v<D, int16_t> ||
+           std::is_same_v<D, uint16_t> || std::is_same_v<D, int32_t> || std::is_same_v<D, uint32_t> ||
+           std::is_same_v<D, int64_t> || std::is_same_v<D, uint64_t>;
+#else
+    return false;
+#endif
+  }
+  DistanceType lastPoppedDistance;
+  DistanceType cachedMaxDistance;
   size_t maxExpandedIndex;
 
   __attribute__((always_inline)) inline void siftDownMaxHeap(std::vector<T> &heap) {
@@ -2988,15 +3068,646 @@ template <typename T = detail::CandidateObject> class HeapCandidateObjects {
     return static_cast<int>(topKCount + expandedCount);
   }
 
+  size_t getSortedObjectsBySort(T *output, size_t maxCount = 0) {
+    const size_t total = topKResults.size() + expandedResults.size();
+    const size_t limit = maxCount == 0 ? total : std::min(maxCount, total);
+    //std::memcpy(output, topKResults.data(), topKResults.size() * sizeof(T));
+    std::reverse_copy(topKResults.data(), topKResults.data() + topKResults.size(), output);
+    std::memcpy(output + topKResults.size(), expandedResults.data(), expandedResults.size() * sizeof(T));
+    std::sort(output, output + total, CompareByDistanceAsc{});
+    return limit;
+  }
+
+  size_t getSortedObjectsByHeapPop(T *output, size_t maxCount = 0) {
+    const size_t total     = topKResults.size() + expandedResults.size();
+    const size_t limit     = maxCount == 0 ? total : std::min(maxCount, total);
+    const size_t topKCount = topKResults.size();
+
+    for (size_t i = 0; i < topKCount; ++i) {
+      std::pop_heap(topKResults.begin(), topKResults.end(), CompareByDistanceMax{});
+      output[topKCount - 1 - i] = topKResults.back();
+      topKResults.pop_back();
+    }
+
+    std::sort(expandedResults.begin(), expandedResults.end(), CompareByDistanceAsc{});
+    const size_t expandedNeed = limit > topKCount ? std::min(expandedResults.size(), limit - topKCount) : 0;
+    std::memcpy(output + topKCount, expandedResults.data(), expandedNeed * sizeof(T));
+
+    if (limit < topKCount) {
+      return limit;
+    }
+    return topKCount + expandedNeed;
+  }
+
+#ifdef NGT_X86SIMDSORT
+  size_t getSortedObjectsBySimd(T *output, size_t maxCount = 0) {
+    const size_t total = topKResults.size() + expandedResults.size();
+    const size_t limit = maxCount == 0 ? total : std::min(maxCount, total);
+    //std::memcpy(output, topKResults.data(), topKResults.size() * sizeof(T));
+    std::reverse_copy(topKResults.data(), topKResults.data() + topKResults.size(), output);
+    std::memcpy(output + topKResults.size(), expandedResults.data(), expandedResults.size() * sizeof(T));
+    static_assert(isX86SimdSortable(), "DistanceType is not supported by x86simdsort");
+    x86simdsort::object_qsort(output, static_cast<uint32_t>(total), [](const T &o) { return o.distance; });
+    return limit;
+  }
+#endif
+
   void setK(uint16_t cap) {
     k                       = cap;
     capacity                = (uint16_t)(k * resultExpansion);
     expandedResultsCapacity = (capacity > k) ? (capacity - k) : 0;
   }
 
-  __attribute__((always_inline)) inline uint16_t getMaxDistance() const { return cachedMaxDistance; }
+  __attribute__((always_inline)) inline DistanceType getMaxDistance() const { return cachedMaxDistance; }
 
-  uint16_t getCurrentDistance() const { return lastPoppedDistance; }
+  DistanceType getCurrentDistance() const { return lastPoppedDistance; }
+};
+
+namespace detail {
+struct DistanceBucketSorterObject {
+  uint32_t id;
+  union {
+    uint16_t nextIDX;
+    uint16_t distance;
+  };
+  bool visited;
+};
+} // namespace detail
+
+template <typename T = detail::DistanceBucketSorterObject> class DistanceHeapSorter {
+ public:
+  using Object = T;
+  enum class Mode { Packed, Heap };
+
+ private:
+#ifndef QBG_DISTANCE_SHIFT
+#define QBG_DISTANCE_SHIFT 3
+#endif
+  static constexpr int DISTANCE_SHIFT          = QBG_DISTANCE_SHIFT;
+  static constexpr size_t MAX_NUM_BUCKETS      = (0xFFFF >> DISTANCE_SHIFT) + 1;
+  static constexpr uint16_t INVALID_BUCKET_IDX = 0xFFFF;
+  static constexpr uint32_t INVALID_OBJECT_IDX = 0xFFFFFFFFu;
+
+#ifndef NGTQG_HEAP_CAPACITY_FACTOR
+#define NGTQG_HEAP_CAPACITY_FACTOR 1
+#endif
+
+#ifndef NGTQG_DISTANCE_HEAP_RESERVE
+#define NGTQG_DISTANCE_HEAP_RESERVE 300000
+#endif
+
+#ifndef NGTQG_DISTANCE_HEAP_MIN_RESERVE
+#define NGTQG_DISTANCE_HEAP_MIN_RESERVE 4096
+#endif
+
+  static constexpr size_t NUM_BITMAP_WORDS       = MAX_NUM_BUCKETS / 64;
+  static constexpr size_t NODE_RESERVE           = NGTQG_DISTANCE_HEAP_RESERVE;
+  static constexpr size_t DEFAULT_OBJECT_RESERVE = NGTQG_DISTANCE_HEAP_MIN_RESERVE;
+
+  struct Node {
+    T object;
+    uint32_t nextLink;
+  };
+
+  std::vector<Node> nodes;
+
+  uint32_t bucketHead[MAX_NUM_BUCKETS];
+  uint16_t bucketEpoch[MAX_NUM_BUCKETS];
+
+  uint64_t nonempty_[NUM_BITMAP_WORDS];
+
+  struct Position {
+    uint16_t bucketIDX;
+    uint32_t objectIDX;
+  };
+
+  Position unvisitedMin;
+  Position rangeMax;
+  Position sizeMax;
+
+  uint16_t searchSize;
+  uint16_t objectListSize;
+  size_t pushCount;
+  uint16_t currentEpoch;
+  uint16_t lastPoppedBucketIDX;
+
+  Mode mode_;
+
+  std::vector<uint64_t> maxHeap_;
+  std::vector<uint64_t> radiusHeap_;
+  uint16_t nextBucket_;
+  uint32_t nextObjectIdx_;
+  uint16_t cachedRadiusDistance_;
+
+  static uint16_t bucketOf(uint16_t distance) { return distance >> DISTANCE_SHIFT; }
+
+  static uint16_t bucketDistance(uint16_t distance) { return bucketOf(distance) << DISTANCE_SHIFT; }
+
+  void clearNonEmpty() { std::memset(nonempty_, 0, sizeof(nonempty_)); }
+
+  void setNonEmpty(uint16_t bucket) { nonempty_[bucket >> 6] |= (1ULL << (bucket & 0x3F)); }
+
+  void clearNonEmpty(uint16_t bucket) { nonempty_[bucket >> 6] &= ~(1ULL << (bucket & 0x3F)); }
+
+  uint16_t findNextMinBucket(uint16_t from) const {
+    if (from >= MAX_NUM_BUCKETS) return INVALID_BUCKET_IDX;
+    uint16_t word = from >> 6;
+    uint64_t mask = ~((1ULL << (from & 0x3F)) - 1ULL);
+    uint64_t bits = nonempty_[word] & mask;
+    if (bits) {
+      return (word << 6) + static_cast<uint16_t>(__builtin_ctzll(bits));
+    }
+    for (uint16_t w = word + 1; w < NUM_BITMAP_WORDS; ++w) {
+      if (nonempty_[w]) {
+        return (w << 6) + static_cast<uint16_t>(__builtin_ctzll(nonempty_[w]));
+      }
+    }
+    return INVALID_BUCKET_IDX;
+  }
+
+  static uint64_t pack(uint16_t distance, uint32_t idx) {
+    return (static_cast<uint64_t>(distance) << 32) | static_cast<uint64_t>(idx);
+  }
+
+  static uint16_t unpackDistance(uint64_t v) { return static_cast<uint16_t>(v >> 32); }
+
+  static uint32_t unpackIdx(uint64_t v) { return static_cast<uint32_t>(v & 0xFFFFFFFFu); }
+
+  static bool maxLess(uint64_t a, uint64_t b) { return a > b; }
+
+  static void siftUpMax(std::vector<uint64_t> &heap, size_t i) {
+    const uint64_t v = heap[i];
+    while (i > 0) {
+      size_t p = (i - 1) >> 1;
+      if (!maxLess(v, heap[p])) break;
+      heap[i] = heap[p];
+      i       = p;
+    }
+    heap[i] = v;
+  }
+
+  static void siftDownMax(std::vector<uint64_t> &heap, size_t i) {
+    const uint64_t v = heap[i];
+    const size_t n   = heap.size();
+    while (true) {
+      size_t l = (i << 1) + 1;
+      if (l >= n) break;
+      size_t r       = l + 1;
+      size_t largest = r < n && maxLess(heap[r], heap[l]) ? r : l;
+      if (!maxLess(heap[largest], v)) break;
+      heap[i] = heap[largest];
+      i       = largest;
+    }
+    heap[i] = v;
+  }
+
+  void removeFromRadiusHeap(uint32_t idx) {
+    for (size_t i = 0; i < radiusHeap_.size(); ++i) {
+      if (unpackIdx(radiusHeap_[i]) == idx) {
+        radiusHeap_[i] = radiusHeap_.back();
+        radiusHeap_.pop_back();
+        if (i < radiusHeap_.size()) {
+          siftDownMax(radiusHeap_, i);
+          siftUpMax(radiusHeap_, i);
+        }
+        break;
+      }
+    }
+  }
+
+  void recomputeCachedRadiusDistance() {
+    if (radiusHeap_.empty()) {
+      cachedRadiusDistance_ = 0;
+    } else {
+      cachedRadiusDistance_ = bucketDistance(unpackDistance(radiusHeap_.front()));
+    }
+  }
+
+  void refreshRadius() { recomputeCachedRadiusDistance(); }
+
+ public:
+  DistanceHeapSorter(size_t numBuckets = MAX_NUM_BUCKETS, size_t numObjects = DEFAULT_OBJECT_RESERVE) {
+    if (numBuckets > MAX_NUM_BUCKETS) {
+      std::stringstream msg;
+      msg << "DistanceHeapSorter: numBuckets (" << numBuckets << ") exceeds maximum (" << MAX_NUM_BUCKETS
+          << ")";
+      NGTThrowException(msg);
+    }
+    if (sizeof(T) != sizeof(detail::DistanceBucketSorterObject)) {
+      std::stringstream msg;
+      msg << "The specified class size is not expected. " << sizeof(T) << ":"
+          << sizeof(detail::DistanceBucketSorterObject);
+      NGTThrowException(msg);
+    }
+    nodes.reserve(numObjects);
+
+    std::memset(bucketHead, 0xFF, sizeof(bucketHead));
+    std::memset(bucketEpoch, 0, sizeof(bucketEpoch));
+    clearNonEmpty();
+
+    searchSize          = 0;
+    objectListSize      = 0;
+    pushCount           = 0;
+    currentEpoch        = 1;
+    lastPoppedBucketIDX = INVALID_BUCKET_IDX;
+
+    unvisitedMin.bucketIDX = INVALID_BUCKET_IDX;
+    unvisitedMin.objectIDX = INVALID_OBJECT_IDX;
+    rangeMax.bucketIDX     = 0;
+    rangeMax.objectIDX     = 0;
+    sizeMax.bucketIDX      = 0;
+    sizeMax.objectIDX      = 0;
+
+    mode_                 = Mode::Packed;
+    nextBucket_           = 0;
+    nextObjectIdx_        = INVALID_OBJECT_IDX;
+    cachedRadiusDistance_ = 0;
+  }
+
+  void setMode(Mode mode) { mode_ = mode; }
+
+  void reset(uint16_t size, float expansion) {
+    searchSize     = size;
+    objectListSize = static_cast<uint16_t>(static_cast<float>(size) * (expansion < 1.0f ? 1.0f : expansion));
+    pushCount      = 0;
+    lastPoppedBucketIDX = INVALID_BUCKET_IDX;
+
+    currentEpoch++;
+    if (currentEpoch == 0xFFFF) {
+      std::memset(bucketEpoch, 0, sizeof(bucketEpoch));
+      currentEpoch = 1;
+    }
+    clearNonEmpty();
+
+    if (mode_ == Mode::Heap) {
+      nodes.clear();
+      nodes.reserve(std::max(DEFAULT_OBJECT_RESERVE, static_cast<size_t>(objectListSize)));
+      maxHeap_.clear();
+      maxHeap_.reserve(static_cast<size_t>(objectListSize) * NGTQG_HEAP_CAPACITY_FACTOR);
+      radiusHeap_.clear();
+      radiusHeap_.reserve(searchSize);
+
+      unvisitedMin.bucketIDX = INVALID_BUCKET_IDX;
+      unvisitedMin.objectIDX = INVALID_OBJECT_IDX;
+      rangeMax.bucketIDX     = 0;
+      rangeMax.objectIDX     = 0;
+      sizeMax.bucketIDX      = 0;
+      sizeMax.objectIDX      = 0;
+      nextBucket_            = 0;
+      nextObjectIdx_         = INVALID_OBJECT_IDX;
+      cachedRadiusDistance_  = 0;
+    } else {
+      nodes.clear();
+      if (nodes.capacity() < NODE_RESERVE) {
+        nodes.reserve(NODE_RESERVE);
+      }
+
+      unvisitedMin.bucketIDX = INVALID_BUCKET_IDX;
+      unvisitedMin.objectIDX = INVALID_OBJECT_IDX;
+      rangeMax.bucketIDX     = 0;
+      rangeMax.objectIDX     = 0;
+      sizeMax.bucketIDX      = 0;
+      sizeMax.objectIDX      = 0;
+      nextBucket_            = 0;
+      nextObjectIdx_         = INVALID_OBJECT_IDX;
+      cachedRadiusDistance_  = 0;
+    }
+  }
+
+  bool push(const T &element) {
+    if (mode_ == Mode::Heap) {
+      return pushHeap(element);
+    }
+    return pushPacked(element);
+  }
+
+  bool pushPacked(const T &element) {
+    bool ret                 = false;
+    const uint16_t bucketIDX = bucketOf(element.distance);
+
+    uint32_t packedObjectIDX = static_cast<uint32_t>(nodes.size());
+    nodes.resize(packedObjectIDX + 1);
+
+    if (pushCount >= objectListSize) {
+      if (bucketIDX < sizeMax.bucketIDX) {
+        nodes[packedObjectIDX] = nodes[sizeMax.objectIDX];
+
+        uint32_t idx = bucketHead[sizeMax.bucketIDX];
+        if (idx == sizeMax.objectIDX) {
+          bucketHead[sizeMax.bucketIDX] = packedObjectIDX;
+        } else {
+          uint32_t previdx;
+          do {
+            previdx = idx;
+            idx     = nodes[previdx].nextLink;
+          } while (idx != sizeMax.objectIDX);
+          nodes[previdx].nextLink = packedObjectIDX;
+        }
+
+        if (rangeMax.objectIDX == sizeMax.objectIDX) {
+          rangeMax.objectIDX = packedObjectIDX;
+        }
+
+        const uint32_t replacedObjectIDX = sizeMax.objectIDX;
+        sizeMax.objectIDX                = packedObjectIDX;
+        packedObjectIDX                  = replacedObjectIDX;
+      }
+    }
+
+    uint32_t prevIDX = INVALID_OBJECT_IDX;
+    if (bucketEpoch[bucketIDX] == currentEpoch) {
+      prevIDX = bucketHead[bucketIDX];
+    }
+
+    Node &node          = nodes[packedObjectIDX];
+    node.object         = element;
+    node.object.visited = false;
+    node.nextLink       = prevIDX;
+
+    bucketHead[bucketIDX]  = packedObjectIDX;
+    bucketEpoch[bucketIDX] = currentEpoch;
+    setNonEmpty(bucketIDX);
+
+    pushCount++;
+
+    if (unvisitedMin.bucketIDX == INVALID_BUCKET_IDX || bucketIDX <= unvisitedMin.bucketIDX) {
+      unvisitedMin.bucketIDX = bucketIDX;
+      unvisitedMin.objectIDX = packedObjectIDX;
+    }
+
+    if (pushCount > objectListSize) {
+      if (bucketIDX < sizeMax.bucketIDX) {
+        if (nodes[sizeMax.objectIDX].nextLink == INVALID_OBJECT_IDX) {
+          uint16_t packedBucketIDX = sizeMax.bucketIDX;
+          while (packedBucketIDX > 0) {
+            packedBucketIDX--;
+            if (bucketEpoch[packedBucketIDX] == currentEpoch) {
+              sizeMax.bucketIDX = packedBucketIDX;
+              sizeMax.objectIDX = bucketHead[packedBucketIDX];
+              break;
+            }
+          }
+        } else {
+          sizeMax.objectIDX = nodes[sizeMax.objectIDX].nextLink;
+        }
+      }
+      if (bucketIDX < rangeMax.bucketIDX) {
+        if (objectListSize == searchSize) {
+          if (rangeMax.bucketIDX != sizeMax.bucketIDX) {
+            ret = true;
+          }
+          rangeMax.bucketIDX = sizeMax.bucketIDX;
+          rangeMax.objectIDX = sizeMax.objectIDX;
+        } else {
+          if (nodes[rangeMax.objectIDX].nextLink == INVALID_OBJECT_IDX) {
+            uint16_t packedBucketIDX = rangeMax.bucketIDX;
+            while (packedBucketIDX > 0) {
+              packedBucketIDX--;
+              if (bucketEpoch[packedBucketIDX] == currentEpoch) {
+                rangeMax.bucketIDX = packedBucketIDX;
+                rangeMax.objectIDX = bucketHead[packedBucketIDX];
+                ret                = true;
+                break;
+              }
+            }
+          } else {
+            rangeMax.objectIDX = nodes[rangeMax.objectIDX].nextLink;
+          }
+        }
+      }
+    } else if (pushCount > searchSize) {
+      if (bucketIDX < rangeMax.bucketIDX) {
+        if (nodes[rangeMax.objectIDX].nextLink == INVALID_OBJECT_IDX) {
+          uint16_t packedBucketIDX = rangeMax.bucketIDX;
+          while (packedBucketIDX > 0) {
+            packedBucketIDX--;
+            if (bucketEpoch[packedBucketIDX] == currentEpoch) {
+              rangeMax.bucketIDX = packedBucketIDX;
+              rangeMax.objectIDX = bucketHead[packedBucketIDX];
+              ret                = true;
+              break;
+            }
+          }
+        } else {
+          rangeMax.objectIDX = nodes[rangeMax.objectIDX].nextLink;
+        }
+      } else if (bucketIDX >= sizeMax.bucketIDX) {
+        sizeMax.bucketIDX = bucketIDX;
+        sizeMax.objectIDX = packedObjectIDX;
+      }
+    } else {
+      if (rangeMax.bucketIDX == INVALID_BUCKET_IDX || bucketIDX >= rangeMax.bucketIDX) {
+        rangeMax.bucketIDX = bucketIDX;
+        rangeMax.objectIDX = packedObjectIDX;
+      }
+      if (pushCount == searchSize) {
+        sizeMax.bucketIDX = rangeMax.bucketIDX;
+        sizeMax.objectIDX = rangeMax.objectIDX;
+        ret               = true;
+      }
+    }
+
+    return ret;
+  }
+
+  bool pushHeap(const T &element) {
+    const uint16_t radiusBefore = cachedRadiusDistance_;
+
+    const uint32_t idx    = static_cast<uint32_t>(nodes.size());
+    const uint16_t bucket = bucketOf(element.distance);
+    const uint64_t entry  = pack(element.distance, idx);
+
+    uint32_t prevIDX = INVALID_OBJECT_IDX;
+    if (bucketEpoch[bucket] == currentEpoch) {
+      prevIDX = bucketHead[bucket];
+    }
+
+    nodes.push_back({element, prevIDX});
+    nodes[idx].object.visited = false;
+    bucketHead[bucket]        = idx;
+    bucketEpoch[bucket]       = currentEpoch;
+    setNonEmpty(bucket);
+    if (bucket < nextBucket_) {
+      nextBucket_ = bucket;
+    }
+
+    const size_t capacity = static_cast<size_t>(objectListSize) * NGTQG_HEAP_CAPACITY_FACTOR;
+    bool enterResult      = true;
+    if (capacity > 0 && maxHeap_.size() == capacity) {
+      const uint16_t worstDistance = unpackDistance(maxHeap_.front());
+      const uint16_t worstBucket   = bucketOf(worstDistance);
+      if (bucket > worstBucket || (bucket == worstBucket && element.distance >= worstDistance)) {
+        enterResult = false;
+      }
+    }
+
+    if (enterResult) {
+      maxHeap_.push_back(entry);
+      siftUpMax(maxHeap_, maxHeap_.size() - 1);
+
+      if (radiusHeap_.size() < searchSize) {
+        radiusHeap_.push_back(entry);
+        siftUpMax(radiusHeap_, radiusHeap_.size() - 1);
+      } else if (!radiusHeap_.empty() && entry < radiusHeap_.front()) {
+        radiusHeap_.front() = entry;
+        siftDownMax(radiusHeap_, 0);
+      }
+
+      if (maxHeap_.size() > capacity) {
+        const uint64_t evictEntry    = maxHeap_.front();
+        const uint32_t evictIdx      = unpackIdx(evictEntry);
+        const uint16_t evictDistance = unpackDistance(evictEntry);
+
+        std::swap(maxHeap_.front(), maxHeap_.back());
+        maxHeap_.pop_back();
+        if (!maxHeap_.empty()) {
+          siftDownMax(maxHeap_, 0);
+        }
+
+        if (!radiusHeap_.empty() && evictDistance <= unpackDistance(radiusHeap_.front())) {
+          removeFromRadiusHeap(evictIdx);
+        }
+      }
+    }
+
+    pushCount++;
+
+    if (pushCount == searchSize) {
+      refreshRadius();
+      return true;
+    }
+
+    refreshRadius();
+    if (pushCount > searchSize) {
+      return cachedRadiusDistance_ < radiusBefore;
+    }
+    return false;
+  }
+
+  uint16_t getCurrentDistance() const {
+    if (lastPoppedBucketIDX == INVALID_BUCKET_IDX) {
+      return 0xFFFF;
+    }
+    return lastPoppedBucketIDX << DISTANCE_SHIFT;
+  }
+
+  bool pop(T &result) {
+    if (mode_ == Mode::Heap) {
+      return popHeap(result);
+    }
+    return popPacked(result);
+  }
+
+  bool popPacked(T &result) {
+    uint16_t bucketIDX = unvisitedMin.bucketIDX;
+    uint32_t objectIDX = unvisitedMin.objectIDX;
+
+    while (bucketIDX != INVALID_BUCKET_IDX) {
+      while (objectIDX != INVALID_OBJECT_IDX) {
+        Node &node = nodes[objectIDX];
+
+        if (!node.object.visited) {
+          node.object.visited = true;
+          result              = node.object;
+          result.distance     = bucketIDX << DISTANCE_SHIFT;
+          lastPoppedBucketIDX = bucketIDX;
+
+          unvisitedMin.bucketIDX = bucketIDX;
+          unvisitedMin.objectIDX = node.nextLink;
+          return true;
+        }
+
+        objectIDX = node.nextLink;
+      }
+
+      clearNonEmpty(bucketIDX);
+      bucketIDX = findNextMinBucket(bucketIDX + 1);
+      if (bucketIDX == INVALID_BUCKET_IDX) {
+        unvisitedMin.bucketIDX = INVALID_BUCKET_IDX;
+        return false;
+      }
+      objectIDX = bucketHead[bucketIDX];
+    }
+
+    unvisitedMin.bucketIDX = INVALID_BUCKET_IDX;
+    return false;
+  }
+
+  bool popHeap(T &result) {
+    while (true) {
+      const uint16_t bucket = findNextMinBucket(nextBucket_);
+      if (bucket == INVALID_BUCKET_IDX) {
+        return false;
+      }
+      nextBucket_ = bucket;
+
+      uint32_t idx = bucketHead[bucket];
+      while (idx != INVALID_OBJECT_IDX && nodes[idx].object.visited) {
+        idx = nodes[idx].nextLink;
+      }
+
+      if (idx == INVALID_OBJECT_IDX) {
+        clearNonEmpty(bucket);
+        nextBucket_ = bucket + 1;
+        continue;
+      }
+
+      bucketHead[bucket]        = nodes[idx].nextLink;
+      nodes[idx].object.visited = true;
+      result                    = nodes[idx].object;
+      result.distance           = bucketDistance(result.distance);
+      lastPoppedBucketIDX       = bucket;
+      return true;
+    }
+  }
+
+  uint16_t getMaxBucket() const {
+    if (mode_ == Mode::Heap) {
+      return bucketOf(cachedRadiusDistance_);
+    }
+    return rangeMax.bucketIDX;
+  }
+
+  uint16_t getMaxDistance() const {
+    if (mode_ == Mode::Heap) {
+      return cachedRadiusDistance_;
+    }
+    if (rangeMax.bucketIDX == INVALID_BUCKET_IDX) {
+      return 0;
+    }
+    return rangeMax.bucketIDX << DISTANCE_SHIFT;
+  }
+
+  size_t getObjects(T *output) {
+    if (mode_ == Mode::Heap) {
+      return getObjectsHeap(output);
+    }
+    return getObjectsPacked(output);
+  }
+
+  size_t getObjectsPacked(T *output) {
+    const size_t sz = nodes.size() < objectListSize ? nodes.size() : objectListSize;
+    for (size_t i = 0; i < sz; ++i) {
+      output[i]          = nodes[i].object;
+      output[i].distance = bucketDistance(nodes[i].object.distance);
+    }
+    return sz;
+  }
+
+  size_t getObjectsHeap(T *output) {
+    const size_t sz = maxHeap_.size();
+    for (size_t i = 0; i < sz; ++i) {
+      const uint32_t idx = unpackIdx(maxHeap_[i]);
+      output[i]          = nodes[idx].object;
+      output[i].distance = bucketDistance(unpackDistance(maxHeap_[i]));
+    }
+    return sz;
+  }
+
+  size_t getTopK(T *output, size_t size) {
+    (void)size;
+    return getObjects(output);
+  }
 };
 
 } // namespace NGT

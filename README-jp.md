@@ -218,32 +218,23 @@ QBG (Quantized blob graph-based method)
 ベンチマーク結果
 ---------------
 
-以下はAWS c5.4xlargeのインスタンス上で測定したNGT vのベンチマーク（[ann benchmarks](https://github.com/erikbern/ann-benchmarks)）の結果です。
+以下の結果は NGT v2.8.0 のベンチマーク結果であり、[さくらインターネット株式会社](https://www.sakura.ad.jp/corporate/)が提供する [さくらのクラウド](https://cloud.sakura.ad.jp/) 環境上の Intel(R) Xeon(R) Gold 6230R を用いて測定しています。
 
 #### glove-100-angular
-<img src="./tests/ann-benchmarks-results/glove-100-angular.png?raw=true" width="400">
+<img src="./tests/ann-benchmarks-results/glove-100-angular.png?raw=true" width="600">
 
-#### gist-960-euclidean
-<img src="./tests/ann-benchmarks-results/gist-960-euclidean.png?raw=true" width="400">
-
-#### fashion-mnist-784-euclidean
-<img src="./tests/ann-benchmarks-results/fashion-mnist-784-euclidean.png?raw=true" width="400">
-
-#### nytimes-256-angular
-<img src="./tests/ann-benchmarks-results/nytimes-256-angular.png?raw=true" width="400">
-
-#### sift-128-euclidean
-<img src="./tests/ann-benchmarks-results/sift-128-euclidean.png?raw=true" width="400">
 
 ライセンス
 ----------
 
-Copyright (C) 2015 Yahoo Japan Corporation
+Copyright (C) 2015 Yahoo Japan Corporation  
+Copyright (C) 2026 SAKURA internet Inc.
 
-ヤフー株式会社はApacheライセンスバージョン2.0の下で本ソフトウェアを公開致します。以下のサイトよりライセンスの内容をご確認頂けます。
+本ソフトウェアは Apache License Version 2.0（以下「ライセンス」）の下で提供されています。ライセンスに準拠する場合を除き、本ソフトウェアを使用することはできません。ライセンスのコピーは以下から入手できます。
 
-   http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
+本ソフトウェアで使用されている技術に関する特許権者は、本ソフトウェアが Apache License Version 2.0 に従って利用される限り、当該特許権を利用者に対して行使しません。
 
 貢献者ライセンス同意(CLA)
 -------------------------

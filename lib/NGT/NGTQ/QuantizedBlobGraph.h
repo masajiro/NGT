@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2021 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -55,7 +56,7 @@ class CreationParameters {
     scalarQuantizationClippingRate   = 0.01;
     scalarQuantizationNoOfSamples    = 0;
 #ifdef NGTQ_QUANTIZED_TREE
-    maxObjectsPerNode = -1;
+    maxObjectsPerNode = -2;
 #endif
 
     globalEdgeSizeForCreation        = 10;
@@ -116,8 +117,9 @@ class CreationParameters {
     } else if (property.localCentroidLimit >= 0xFFFF) {
       property.localIDByteSize = 4;
     }
-    property.dimension       = property.dimension == 0 ? property.genuineDimension : property.dimension;
-    property.localDivisionNo = property.localDivisionNo == 0 ? property.dimension : property.localDivisionNo;
+    property.dimension = property.dimension == 0 ? property.genuineDimension : property.dimension;
+    property.localDivisionNo =
+        property.localDivisionNo == 0 ? NGTQ::alignTo4(property.genuineDimension) : property.localDivisionNo;
   }
 
   size_t numOfObjects;
@@ -299,9 +301,16 @@ class SearchContainer : public NGT::SearchContainer {
   SearchContainer(NGT::Object &q)
       : NGT::SearchContainer(q), cutback(0.0), graphExplorationSize(50), exactResultSize(0),
         blobExplorationCoefficient(1.0), numOfProbes(5), refinementExpansion(0.0) {}
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnull-dereference"
+#endif
   SearchContainer()
       : NGT::SearchContainer(*reinterpret_cast<NGT::Object *>(0)), cutback(0.0), graphExplorationSize(50),
         exactResultSize(0), blobExplorationCoefficient(1.0), numOfProbes(5), refinementExpansion(0.0) {}
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
   SearchContainer(SearchContainer &sc, NGT::Object &q) : NGT::SearchContainer(q) {
     QBG::SearchContainer::operator=(sc);
   }
@@ -447,7 +456,14 @@ class QuantizedBlobGraphRepository : public NGTQG::QuantizedGraphRepository {
   static void rearrange(NGTQ::QuantizedObjectSet &quantizedObjects, NGTQG::QuantizedNode &rearrangedObjects) {
     NGTQ::InvertedIndexEntry<uint16_t> iie;
     iie.set(quantizedObjects);
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnull-dereference"
+#endif
     rearrange(iie, rearrangedObjects, *reinterpret_cast<NGTQ::Quantizer *>(0));
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
   }
 
   void extractRemovedIdSet(size_t objectListSize, std::vector<uint32_t> &removedIDs) {

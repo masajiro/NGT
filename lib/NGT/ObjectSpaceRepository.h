@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -650,6 +651,7 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
       delete comparatorForSearch;
       comparatorForSearch = 0;
     }
+    primitiveComparator = nullptr;
     assert(ObjectSpace::dimension != 0);
     distanceType = t;
 #ifdef NGT_PQ4
@@ -827,6 +829,115 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
       std::stringstream msg;
       msg << "NGT::ObjectSpaceRepository: The distance type is invalid. " << distanceType;
       NGTThrowException(msg);
+    }
+    // Set raw distance function for fast non-virtual dispatch.
+    switch (distanceType) {
+    case DistanceTypeL1:
+      if (typeid(OBJECT_TYPE) == typeid(uint8_t)) {
+        primitiveComparator = PrimitiveComparator::L1Uint8::compare;
+      } else if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::L1Float::compare;
+#ifdef NGT_HALF_FLOAT
+      } else if (typeid(OBJECT_TYPE) == typeid(float16)) {
+        primitiveComparator = PrimitiveComparator::L1Float16::compare;
+#endif
+      }
+      break;
+    case DistanceTypeL2:
+      if (typeid(OBJECT_TYPE) == typeid(uint8_t)) {
+        primitiveComparator = PrimitiveComparator::L2Uint8::compare;
+      } else if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::L2Float::compare;
+#ifdef NGT_HALF_FLOAT
+      } else if (typeid(OBJECT_TYPE) == typeid(float16)) {
+        primitiveComparator = PrimitiveComparator::L2Float16::compare;
+#endif
+      }
+      break;
+    case DistanceTypeNormalizedL2:
+      if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::NormalizedL2Float::compare;
+#ifdef NGT_HALF_FLOAT
+      } else if (typeid(OBJECT_TYPE) == typeid(float16)) {
+        primitiveComparator = PrimitiveComparator::NormalizedL2Float16::compare;
+#endif
+      }
+      break;
+    case DistanceTypeHamming: primitiveComparator = PrimitiveComparator::HammingUint8::compare; break;
+    case DistanceTypeJaccard: primitiveComparator = PrimitiveComparator::JaccardUint8::compare; break;
+    case DistanceTypeSparseJaccard:
+      if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::SparseJaccardFloat::compare;
+#ifdef NGT_HALF_FLOAT
+      } else if (typeid(OBJECT_TYPE) == typeid(float16)) {
+        primitiveComparator = PrimitiveComparator::SparseJaccardFloat16::compare;
+#endif
+      }
+      break;
+    case DistanceTypeAngle:
+      if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::AngleFloat::compare;
+#ifdef NGT_HALF_FLOAT
+      } else if (typeid(OBJECT_TYPE) == typeid(float16)) {
+        primitiveComparator = PrimitiveComparator::AngleFloat16::compare;
+#endif
+      }
+      break;
+    case DistanceTypeCosine:
+      if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::CosineSimilarityFloat::compare;
+#ifdef NGT_HALF_FLOAT
+      } else if (typeid(OBJECT_TYPE) == typeid(float16)) {
+        primitiveComparator = PrimitiveComparator::CosineSimilarityFloat16::compare;
+#endif
+      }
+      break;
+    case DistanceTypeNormalizedAngle:
+      if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::NormalizedAngleFloat::compare;
+#ifdef NGT_HALF_FLOAT
+      } else if (typeid(OBJECT_TYPE) == typeid(float16)) {
+        primitiveComparator = PrimitiveComparator::NormalizedAngleFloat16::compare;
+#endif
+      }
+      break;
+    case DistanceTypeNormalizedCosine:
+      if (typeid(OBJECT_TYPE) == typeid(qsint8)) {
+        primitiveComparator = PrimitiveComparator::NormalizedCosineSimilarityQsint8::compare;
+      } else if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::NormalizedCosineSimilarityFloat::compare;
+#ifdef NGT_HALF_FLOAT
+      } else if (typeid(OBJECT_TYPE) == typeid(float16)) {
+        primitiveComparator = PrimitiveComparator::NormalizedCosineSimilarityFloat16::compare;
+#endif
+      }
+      break;
+    case DistanceTypeInnerProduct:
+      if (typeid(OBJECT_TYPE) == typeid(qsint8)) {
+        primitiveComparator = PrimitiveComparator::InnerProductQsint8::compare;
+      } else if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::L2Float::compare;
+      }
+      break;
+    case DistanceTypePoincare:
+      if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::PoincareFloat::compare;
+#ifdef NGT_HALF_FLOAT
+      } else if (typeid(OBJECT_TYPE) == typeid(float16)) {
+        primitiveComparator = PrimitiveComparator::PoincareFloat16::compare;
+#endif
+      }
+      break;
+    case DistanceTypeLorentz:
+      if (typeid(OBJECT_TYPE) == typeid(float)) {
+        primitiveComparator = PrimitiveComparator::LorentzFloat::compare;
+#ifdef NGT_HALF_FLOAT
+      } else if (typeid(OBJECT_TYPE) == typeid(float16)) {
+        primitiveComparator = PrimitiveComparator::LorentzFloat16::compare;
+#endif
+      }
+      break;
+    default: primitiveComparator = nullptr; break;
     }
   }
 
@@ -1379,6 +1490,7 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
   size_t getSizeOfElement() { return sizeof(OBJECT_TYPE); }
   const std::type_info &getObjectType() { return typeid(OBJECT_TYPE); }
   size_t getByteSizeOfObject() { return getByteSize(); }
+  size_t getByteSizeOfPaddedObject() { return getPaddedByteSize(); }
 
   ObjectRepository &getRepository() { return *this; }
 

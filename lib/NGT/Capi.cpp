@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -484,7 +485,8 @@ NGTPropertyInfo ngt_get_property_info(NGTIndex index, NGTError error) {
                           prop.truncationThreshold,
                           prop.edgeSizeForCreation,
                           prop.edgeSizeForSearch,
-                          prop.edgeSizeLimitForCreation,
+                          prop.minEdgeSizeForCreation,
+                          prop.maxEdgeSizeForCreation,
                           prop.insertionRadiusCoefficient,
                           prop.seedSize,
                           prop.seedType,

@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2020 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -206,7 +207,7 @@ class QbgCliBuildParameters : public QBG::BuildParameters {
       }
     }
 #ifdef NGTQ_QUANTIZED_TREE
-    creation.maxObjectsPerNode = args.getl("k", -1);
+    creation.maxObjectsPerNode = args.getl("k", -2);
 #endif
   }
 
@@ -448,14 +449,23 @@ class SearchParameters : public NGT::Command::SearchParameters {
     if (tokens.size() >= 3) {
       stepOfResultExpansion = NGT::Common::strtod(tokens[2]);
     }
+    searchExpansion        = args.getf("S", 3.0);
+    idBitShift             = args.getl("A", 0);
+    distanceHeapSorterMode = args.getl("H", 'p');
+    std::cerr << "se:a:H=" << searchExpansion << ":" << idBitShift << ":" << (int)distanceHeapSorterMode
+              << std::endl;
   }
   float beginOfResultExpansion;
   float endOfResultExpansion;
   float stepOfResultExpansion;
+  float searchExpansion;
+  size_t idBitShift;
+  char distanceHeapSorterMode;
 };
 
 void QBG::CLI::buildQG(NGT::Args &args) {
-  const std::string usage = "Usage: qbg build-qg [-Q dimension-of-subvector] [-E max-number-of-edges] index";
+  const std::string usage = "Usage: qbg build-qg [-Q dimension-of-subvector] [-E max-number-of-edges] [-T "
+                            "edge-trim-threshold] index";
 
   QbgCliBuildParameters buildParameters(args);
   buildParameters.getBuildParameters();
@@ -470,8 +480,9 @@ void QBG::CLI::buildQG(NGT::Args &args) {
     NGTThrowException(msg);
   }
 
-  size_t phase         = args.getl("p", 0);
-  size_t maxNumOfEdges = args.getl("E", 128);
+  size_t phase             = args.getl("p", 0);
+  size_t maxNumOfEdges     = args.getl("E", 128);
+  size_t edgeTrimThreshold = args.getl("T", 0);
 
   const std::string qgPath = indexPath + "/qg";
 
@@ -499,7 +510,7 @@ void QBG::CLI::buildQG(NGT::Args &args) {
   }
   if (phase == 0 || phase == 3) {
     std::cerr << "building the quantized graph... " << std::endl;
-    NGTQG::Index::realign(indexPath, maxNumOfEdges, verbose);
+    NGTQG::Index::realign(indexPath, maxNumOfEdges, edgeTrimThreshold, verbose);
   }
 }
 
@@ -529,7 +540,7 @@ void searchQG(NGTQG::Index &index, SearchParameters &searchParameters, ostream &
       float value;
       linestream >> value;
       if (linestream.fail()) {
-        NGTThrowException("NGTQG: invalid stream.");
+        NGTThrowException("NGTQG: invalid query stream.");
       }
       query.push_back(value);
     }
@@ -569,16 +580,18 @@ void searchQG(NGTQG::Index &index, SearchParameters &searchParameters, ostream &
       searchQuery.setResultExpansion(resultExpansion);
       searchQuery.setEpsilon(epsilon);
       searchQuery.setEdgeSize(searchParameters.edgeSize);
+#ifdef NGTQG_DISTANCE_HEAP_SORTER
+      searchQuery.setDistanceHeapSorterMode(searchParameters.distanceHeapSorterMode == 'p'
+                                                ? NGT::DistanceSorter<>::Mode::Packed
+                                                : NGT::DistanceSorter<>::Mode::Heap);
+#endif
+      searchQuery.idBitShift      = searchParameters.idBitShift;
+      searchQuery.searchExpansion = searchParameters.searchExpansion;
       NGT::Timer timer;
       switch (searchParameters.indexType) {
       case 't':
         timer.start();
         index.NGTQG::Index::search(searchQuery);
-        timer.stop();
-        break;
-      case 'Q':
-        timer.start();
-        index.NGTQG::Index::searchUsingDistanceSorter(searchQuery);
         timer.stop();
         break;
       case 's':
@@ -638,7 +651,7 @@ void searchQG(NGTQG::Index &index, SearchParameters &searchParameters, ostream &
 void QBG::CLI::searchQG(NGT::Args &args) {
   const string usage =
       "Usage: qbg search-qg [-i index-type(g|t|s)] [-n result-size] [-e epsilon] [-E edge-size] "
-      "[-o output-mode] [-p result-expansion] index(input) query.tsv(input)";
+      "[-o output-mode] [-p result-expansion] [-H heap-mode(0=new,1=old)] index(input) query.tsv(input)";
 
   args.parse("v");
 
@@ -689,7 +702,7 @@ void QBG::CLI::searchQG(NGT::Args &args) {
 }
 
 #ifdef NGTQ_QUANTIZED_TREE
-void quantizeTree(const std::string &indexPath, size_t maxObjectsPerNode, bool verbose) {
+void quantizeTree(const std::string &indexPath, int64_t maxObjectsPerNode, bool verbose) {
   NGT::Index index(indexPath);
 
   NGT::GraphAndTreeIndex &graphIndex = static_cast<NGT::GraphAndTreeIndex &>(index.getIndex());
@@ -710,6 +723,11 @@ void quantizeTree(const std::string &indexPath, size_t maxObjectsPerNode, bool v
     std::cerr << "quantizeTree: graph index is not yet generated. objectCount=" << objectCount
               << " graphNodeCount=" << graphNodeCount << std::endl;
     return;
+  }
+
+  if (maxObjectsPerNode == -1) {
+    maxObjectsPerNode = graphIndex.NeighborhoodGraph::property.seedSize;
+    std::cerr << "Using property.seedSize as maxObjectsPerNode: " << maxObjectsPerNode << std::endl;
   }
 
   auto &leafNodes = graphIndex.DVPTree::leafNodes;
@@ -783,9 +801,9 @@ void QBG::CLI::createQG(NGT::Args &args) {
   NGTQG::Index::append(indexPath, buildParameters);
 
 #ifdef NGTQ_QUANTIZED_TREE
-  if (buildParameters.creation.maxObjectsPerNode >= 0) {
+  if (buildParameters.creation.maxObjectsPerNode >= -1) {
     std::cerr << "quantizing tree..." << std::endl;
-    ::quantizeTree(indexPath, static_cast<size_t>(buildParameters.creation.maxObjectsPerNode), verbose);
+    ::quantizeTree(indexPath, buildParameters.creation.maxObjectsPerNode, verbose);
   }
 #endif
 }
@@ -820,8 +838,8 @@ void QBG::CLI::quantizeTree(NGT::Args &args) {
     NGTThrowException(msg);
   }
 
-  bool verbose             = args.getBool("v");
-  size_t maxObjectsPerNode = args.getl("k", 32);
+  bool verbose              = args.getBool("v");
+  int64_t maxObjectsPerNode = args.getl("k", 32);
 
   try {
     ::quantizeTree(indexPath, maxObjectsPerNode, verbose);
@@ -1482,7 +1500,7 @@ void QBG::CLI::expandBlob(NGT::Args &args) {
   ngtSearchContainer.setSize(50);
   QBG::SearchContainer qbgSearchContainer;
   qbgSearchContainer.setSize(args.getl("n", 10));
-  qbgSearchContainer.setBlobEpsilon(args.getl("b", 0.1));
+  qbgSearchContainer.setBlobEpsilon(args.getf("b", 0.1));
   qbgSearchContainer.setNumOfProbes(args.getl("P", 10));
   qbgSearchContainer.setRefinementExpansion(args.getf("p", 3.0));
   float rate = args.getf("r", -1.0);

@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2021 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -63,6 +64,7 @@ typedef struct {
 typedef struct {
   float dimension_of_subvector;
   size_t max_number_of_edges;
+  size_t edge_trim_threshold;
 } NGTQGQuantizationParameters;
 
 NGTQGIndex ngtqg_open_index(const char *, NGTQGError);

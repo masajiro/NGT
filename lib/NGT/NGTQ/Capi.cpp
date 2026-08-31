@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2021 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -155,12 +156,13 @@ bool ngtqg_search_index_float16(NGTQGIndex index, NGTQGQueryFloat16 query, NGTOb
 void ngtqg_initialize_quantization_parameters(NGTQGQuantizationParameters *parameters) {
   parameters->dimension_of_subvector = 0;
   parameters->max_number_of_edges    = 128;
+  parameters->edge_trim_threshold    = 0;
 }
 
 bool ngtqg_quantize(const char *indexPath, NGTQGQuantizationParameters parameters, NGTError error) {
   try {
     NGTQG::Index::quantize(indexPath, parameters.dimension_of_subvector, parameters.max_number_of_edges,
-                           false);
+                           parameters.edge_trim_threshold, false);
     return true;
   } catch (std::exception &err) {
     std::stringstream ss;

@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2021 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +17,23 @@
 
 #include "QuantizedBlobGraph.h"
 #include "Optimizer.h"
+
+size_t QBG::Optimizer::alignAndResizeVectors(std::vector<std::vector<float>> &vectors,
+                                             size_t numberOfSubvectors) {
+  if (vectors.empty()) {
+    return 0;
+  }
+  if (numberOfSubvectors == 0) {
+    std::stringstream msg;
+    msg << "# of subspaces (m) is zero.";
+    NGTThrowException(msg);
+  }
+  size_t dim = (vectors[0].size() / numberOfSubvectors) * numberOfSubvectors;
+  for (auto &v : vectors) {
+    v.resize(dim);
+  }
+  return dim;
+}
 
 QBG::Optimizer::Optimizer(QBG::BuildParameters &param) {
 #ifdef NGTQ_QBG
@@ -398,18 +416,8 @@ void QBG::Optimizer::optimize(vector<vector<float>> &vectors, vector<vector<floa
     NGTThrowException(msg);
   }
 
-  auto dim = vectors[0].size();
-  if (numberOfSubvectors == 0) {
-    std::stringstream msg;
-    msg << "# of subspaces (m) is zero.";
-    NGTThrowException(msg);
-  }
+  size_t dim    = alignAndResizeVectors(vectors, numberOfSubvectors);
   subvectorSize = dim / numberOfSubvectors;
-  if (dim % numberOfSubvectors != 0) {
-    std::stringstream msg;
-    msg << "# of subspaces (m) is illegal. " << dim << ":" << numberOfSubvectors;
-    NGTThrowException(msg);
-  }
 
   generateResidualObjects(globalCentroid, vectors);
 
@@ -541,6 +549,7 @@ void QBG::Optimizer::optimize(std::string invector, std::string ofile, std::stri
 #else
   loadVectors(invector, vectors);
 #endif
+  alignAndResizeVectors(vectors, numberOfSubvectors);
 
   vector<vector<float>> globalCentroid;
   NGT::Clustering::loadVectors(global, globalCentroid);
@@ -640,6 +649,7 @@ size_t QBG::Optimizer::extractScaleAndOffset(const std::string indexPath, float 
       if (random > p) continue;
       std::vector<float> object;
       objectList.get(id, object, &quantizer.globalCodebookIndex.getObjectSpace());
+      object.resize(dim);
       if (!quantizer.rotation.empty()) {
         quantizer.rotation.mul(object);
       }

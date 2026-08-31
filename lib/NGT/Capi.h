@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -142,7 +143,8 @@ typedef struct {
   int16_t truncation_threshold;
   int16_t edge_size_for_creation;
   int16_t edge_size_for_search;
-  int16_t edge_size_limit_for_creation;
+  int16_t min_edge_size_for_creation;
+  int16_t max_edge_size_for_creation;
   double insertion_radius_coefficient;
   int16_t seed_size;
   int seed_type;
