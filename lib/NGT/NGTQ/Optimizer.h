@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2021 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -486,6 +487,7 @@ class Optimizer {
   static size_t convertObjectsFromInnerProductToL2(const std::string indexPath, size_t nOfObjects,
                                                    bool verbose);
   static size_t normalizeObjectsForCosine(const std::string indexPath, size_t nOfObjects, bool verbose);
+  static size_t alignAndResizeVectors(std::vector<std::vector<float>> &vectors, size_t numberOfSubvectors);
 #endif
   NGT::Timer timelimitTimer;
   size_t subvectorSize;

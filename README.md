@@ -218,35 +218,22 @@ Supported Programming Languages
 
 Benchmark Results
 -----------------
-The followings are the results of [ann benchmarks](https://github.com/erikbern/ann-benchmarks) for NGT v2.0.0 where the timeout is 5 hours on an AWS c5.4xlarge instance.
+The following results are for NGT v2.8.0 and were measured on [Sakura Cloud](https://cloud.sakura.ad.jp/), provided by [SAKURA internet Inc.](https://www.sakura.ad.jp/corporate/en/), using an Intel(R) Xeon(R) Gold 6230R.
 
 #### glove-100-angular
-<img src="./tests/ann-benchmarks-results/glove-100-angular.png?raw=true" width="400">
-
-#### gist-960-euclidean
-<img src="./tests/ann-benchmarks-results/gist-960-euclidean.png?raw=true" width="400">
-
-#### fashion-mnist-784-euclidean
-<img src="./tests/ann-benchmarks-results/fashion-mnist-784-euclidean.png?raw=true" width="400">
-
-#### nytimes-256-angular
-<img src="./tests/ann-benchmarks-results/nytimes-256-angular.png?raw=true" width="400">
-
-#### sift-128-euclidean
-<img src="./tests/ann-benchmarks-results/sift-128-euclidean.png?raw=true" width="400">
-
+<img src="./tests/ann-benchmarks-results/glove-100-angular.png?raw=true" width="600">
 
 License
 -------
 
-Copyright (C) 2015 Yahoo Japan Corporation
+Copyright (C) 2015 Yahoo Japan Corporation  
+Copyright (C) 2026 SAKURA internet Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this software except in compliance with the License. You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
-Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and limitations under the License.
+The holders of patents covering technologies used in this software will not assert those patent rights against users of this software, provided that the software is used in compliance with the Apache License, Version 2.0.
 
 Contributor License Agreement
 -----------------------------

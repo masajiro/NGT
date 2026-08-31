@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,6 +38,7 @@ using namespace std;
 #include <experimental/filesystem>
 #endif
 #endif
+#include <random>
 
 NGT::Command::CreateParameters::CreateParameters(Args &args) {
   args.parse("v");
@@ -53,8 +55,41 @@ NGT::Command::CreateParameters::CreateParameters(Args &args) {
   } catch (...) {
   }
 
-  verbose                             = !args.getBool("v");
-  property.edgeSizeForCreation        = args.getl("E", 10);
+  verbose = !args.getBool("v");
+  {
+    string str                      = args.getString("E", "-");
+    property.edgeSizeForCreation    = 10;
+    property.minEdgeSizeForCreation = 10;
+    property.maxEdgeSizeForCreation = 300;
+    property.searchMultiplier       = 0.0;
+    if (str != "-") {
+      vector<string> tokens;
+      NGT::Common::tokenize(str, tokens, ":");
+      if (tokens.size() >= 1) {
+        property.edgeSizeForCreation = NGT::Common::strtol(tokens[0]);
+      }
+      if (tokens.size() >= 2) {
+        property.minEdgeSizeForCreation = NGT::Common::strtol(tokens[1]);
+      }
+      if (tokens.size() >= 3) {
+        property.maxEdgeSizeForCreation = NGT::Common::strtol(tokens[2]);
+      }
+      if (tokens.size() >= 4) {
+        property.searchMultiplier = NGT::Common::strtof(tokens[3]);
+      }
+      if (tokens.size() >= 5) {
+        property.searchTraceRatio = NGT::Common::strtof(tokens[4]);
+      }
+      if (tokens.size() >= 6) {
+        std::stringstream msg;
+        msg << "Command::CreateParameter: Error: The edge size specification is invalid. "
+               "(# of edges):(min edge size for creation):(max edge size for creation):(search "
+               "multiplier):(trace ratio) "
+            << str;
+        NGTThrowException(msg);
+      }
+    }
+  }
   property.edgeSizeForSearch          = args.getl("S", 40);
   property.batchSizeForCreation       = args.getl("b", 200);
   property.insertionRadiusCoefficient = args.getf("e", 0.1) + 1.0;
@@ -107,6 +142,7 @@ NGT::Command::CreateParameters::CreateParameters(Args &args) {
   case 'i': property.graphType = NGT::Property::GraphType::GraphTypeIANNG; break;
   case 'r': property.graphType = NGT::Property::GraphType::GraphTypeRANNG; break;
   case 'R': property.graphType = NGT::Property::GraphType::GraphTypeRIANNG; break;
+  case 's': property.graphType = NGT::Property::GraphType::GraphTypeSNNG; break;
   default:
     std::stringstream msg;
     msg << "Command::CreateParameter: Error: Invalid graph type. " << graphType;
@@ -120,10 +156,12 @@ NGT::Command::CreateParameters::CreateParameters(Args &args) {
       property.graphType == NGT::Property::GraphType::GraphTypeRIANNG) {
     property.outgoingEdge = 10;
     property.incomingEdge = 100;
-    string str            = args.getString("O", "-");
+  }
+  {
+    string str = args.getString("O", "-");
     if (str != "-") {
       vector<string> tokens;
-      NGT::Common::tokenize(str, tokens, "x");
+      NGT::Common::tokenize(str, tokens, "x:");
       if (str != "-" && tokens.size() != 2) {
         std::stringstream msg;
         msg << "Command::CreateParameter: Error: outgoing/incoming edge size specification is invalid. "
@@ -135,7 +173,6 @@ NGT::Command::CreateParameters::CreateParameters(Args &args) {
       property.incomingEdge = NGT::Common::strtod(tokens[1]);
     }
   }
-
   auto seedType = args.getString("s", "-");
   if (seedType.size() > 1) {
     property.seedSize = NGT::Common::strtol(seedType.substr(1));
@@ -314,7 +351,9 @@ void NGT::Command::create(Args &args) {
     if (debugLevel >= 1) {
       cerr << "edgeSizeForCreation=" << createParameters.property.edgeSizeForCreation << endl;
       cerr << "edgeSizeForSearch=" << createParameters.property.edgeSizeForSearch << endl;
-      cerr << "edgeSizeLimit=" << createParameters.property.edgeSizeLimitForCreation << endl;
+      cerr << "minEdgeSizeForCreation=" << createParameters.property.minEdgeSizeForCreation << endl;
+      cerr << "maxEdgeSizeForCreation=" << createParameters.property.maxEdgeSizeForCreation << endl;
+      cerr << "searchMultiplier=" << createParameters.property.searchMultiplier << endl;
       cerr << "batch size=" << createParameters.property.batchSizeForCreation << endl;
       cerr << "graphType=" << createParameters.property.graphType << endl;
       cerr << "epsilon=" << createParameters.property.insertionRadiusCoefficient - 1.0 << endl;
@@ -612,7 +651,6 @@ void NGT::Command::search(NGT::Index &index, NGT::Command::SearchParameters &sea
       NGT::Timer timer;
       try {
         if (searchParameters.outputMode[0] == 'e') {
-          double time    = 0.0;
           uint64_t ntime = 0;
           double minTime = DBL_MAX;
           size_t trial   = searchParameters.trial <= 0 ? 1 : searchParameters.trial;
@@ -637,10 +675,8 @@ void NGT::Command::search(NGT::Index &index, NGT::Command::SearchParameters &sea
             if (minTime > timer.time) {
               minTime = timer.time;
             }
-            time += timer.time;
             ntime += timer.ntime;
           }
-          time /= (double)trial;
           ntime /= trial;
           timer.time  = minTime;
           timer.ntime = ntime;
@@ -972,9 +1008,7 @@ void NGT::Command::remove(Args &args) {
         NGTThrowException(msg);
       }
       string line;
-      int count = 0;
       while (getline(is, line)) {
-        count++;
         vector<string> tokens;
         NGT::Common::tokenize(line, tokens, "\t, ");
         if (tokens.size() == 0 || tokens[0].size() == 0) {
@@ -1246,11 +1280,19 @@ void NGT::Command::reconstructGraph(Args &args) {
   graphOptimizer.minNumOfEdges                   = args.getl("E", 0);
   graphOptimizer.maxNumOfEdges                   = args.getl("A", std::numeric_limits<int64_t>::max());
   graphOptimizer.numOfThreads                    = args.getl("T", 0);
+  graphOptimizer.shortcutReductionRange          = args.getf("R", -1.0);
+  if (graphOptimizer.shortcutReductionWithLessMemory) {
 #ifdef NGT_SHORTCUT_REDUCTION_WITH_ANGLE
-  graphOptimizer.shortcutReductionRange = args.getf("R", 0.38);
+    graphOptimizer.shortcutReductionRange =
+        graphOptimizer.shortcutReductionRange < 0 ? 0.38 : graphOptimizer.shortcutReductionRange;
 #else
-  graphOptimizer.shortcutReductionRange = args.getf("R", 18.0);
+    graphOptimizer.shortcutReductionRange =
+        graphOptimizer.shortcutReductionRange < 0 ? 18.0 : graphOptimizer.shortcutReductionRange;
 #endif
+  } else {
+    graphOptimizer.shortcutReductionRange =
+        graphOptimizer.shortcutReductionRange < 0 ? 1.0 : graphOptimizer.shortcutReductionRange;
+  }
   graphOptimizer.undirectedGraphConversion = graphConversion == '-' ? false : true;
   graphOptimizer.logDisabled               = !verbose;
 
@@ -1540,911 +1582,86 @@ void NGT::Command::repair(Args &args) {
   }
 }
 
+#if defined(NGT_FOREST) || defined(NGT_ADVANCED_FOREST)
+void NGT::Command::buildForest(NGT::Args &args) {
+  args.parse("l");
+  if (args.getBool("l") || args.get("#0") == "construct-forest") {
 #ifdef NGT_FOREST
-void getClustersFromTree(NGT::GraphAndTreeIndex &graphAndTreeIndex, std::vector<NGT::Node::ID> &leafIDs,
-                         std::vector<NGT::ObjectDistances> &clusterIds, std::vector<bool> &isClustered) {
-  graphAndTreeIndex.getAllLeafNodeIDs(leafIDs);
-  clusterIds.reserve(leafIDs.size());
-  size_t objcount = 0;
-  size_t existed  = 0;
-  for (auto &leafid : leafIDs) {
-    NGT::LeafNode &leaf = *static_cast<NGT::LeafNode *>(graphAndTreeIndex.DVPTree::getNode(leafid));
-#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
-    NGT::ObjectDistances objs(leaf.getObjectIDs(graphAndTreeIndex.DVPTree::leafNodes.allocator),
-                              leaf.getObjectIDs(graphAndTreeIndex.DVPTree::leafNodes.allocator) +
-                                  leaf.getObjectSize());
-#else
-    NGT::ObjectDistances objs(leaf.getObjectIDs(), leaf.getObjectIDs() + leaf.getObjectSize());
-#endif
-    for (auto obj : objs) {
-      if (isClustered[obj.id]) {
-        std::cerr << "already extracted! " << obj.id << ":" << leafid.getID() << std::endl;
-        existed++;
-        continue;
-      }
-      isClustered[obj.id] = true;
-      objcount++;
+    const string usage = "Usage: ngt construct-forest target-index search-index(ANNG)";
+    string indexPath;
+    try {
+      indexPath = args.get("#1");
+    } catch (...) {
+      std::stringstream msg;
+      msg << "No index is specified." << std::endl;
+      msg << usage << std::endl;
+      NGTThrowException(msg);
     }
-    clusterIds.emplace_back(std::move(objs));
-  }
-  std::cerr << "Total objects in clusters from leaves: " << objcount << ":" << existed << std::endl;
-}
-
-void expandClustersBySearch(size_t clusterSize, float clusterSizeFactor, NGT::Index &anng,
-                            std::vector<NGT::ObjectDistances> &clusterIds,
-                            std::vector<NGT::ObjectDistances> &expandedClusterIds,
-                            std::vector<bool> &isClustered) {
-  if (clusterSize == 0 && clusterSizeFactor == 0.0) {
-    return;
-  }
-  expandedClusterIds.resize(clusterIds.size());
-#pragma omp parallel for
-  for (size_t idx = 0; idx < clusterIds.size(); idx++) {
-    if (clusterIds[idx].size() == 0) {
-      std::cerr << "warning! no seeds! But continue. " << idx << std::endl;
-      continue;
+    string anngPath;
+    try {
+      anngPath = args.get("#2");
+    } catch (...) {
+      std::stringstream msg;
+      msg << "No ANNG is specified." << std::endl;
+      msg << usage << std::endl;
+      NGTThrowException(msg);
     }
-    auto nodeId = clusterIds[idx][0];
-    if (nodeId.id == 0) {
-      std::cerr << "fatal error! node id is zero!" << std::endl;
-      abort();
-    }
-    std::unordered_set<NGT::ObjectID> isMember;
-    auto &cluster = clusterIds[idx];
-    for (auto &object : cluster) {
-      isMember.insert(object.id);
-    }
-    {
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      NGT::Object *optr =
-          anng.getObjectSpace().allocateObject(*anng.getObjectSpace().getRepository().get(nodeId.id));
-      NGT::Object &queryObject = *optr;
-#else
-      NGT::Object &queryObject = *anng.getObjectSpace().getRepository().get(nodeId.id);
-#endif
-      NGT::ObjectDistances results;
-      NGT::SearchContainer searchContainer(queryObject);
-      searchContainer.setResults(&results);
-      size_t size = clusterSize;
-      if (clusterSizeFactor > 0.0) {
-        size = clusterIds[idx].size() * clusterSizeFactor;
-      }
-      searchContainer.setSize(size);
-      searchContainer.setEpsilon(0.1);
-      anng.search(searchContainer);
-      for (const auto &result : results) {
-        if (isMember.count(result.id) != 0) continue;
-        expandedClusterIds[idx].emplace_back(result);
-        isClustered[result.id] = true;
-      }
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      anng.getObjectSpace().deleteObject(optr);
-#endif
-    }
-  }
-}
-
-void expandClustersToKHops(NGT::Index &anng, std::vector<NGT::ObjectDistances> &clusterIds,
-                           std::vector<NGT::ObjectDistances> &expandedClusterIds,
-                           std::vector<bool> &isClustered, size_t k = 2, size_t nOfEdges = 32) {
-  k--;
-  size_t nOfAddedNodes          = 0;
-  NGT::GraphAndTreeIndex &graph = dynamic_cast<NGT::GraphAndTreeIndex &>(anng.getIndex());
-  expandedClusterIds.resize(clusterIds.size());
-#pragma omp parallel for
-  for (size_t idx = 0; idx < clusterIds.size(); idx++) {
-    auto &cluster         = clusterIds[idx];
-    auto &expandedCluster = expandedClusterIds[idx];
-    if (cluster.size() == 0) {
-      std::cerr << "warning! no objects! But continue. " << idx << std::endl;
-      continue;
-    }
-    std::vector<bool> isMember(graph.getObjectSpace().getRepository().size(), false);
-    for (auto &object : cluster) {
-      isMember[object.id] = true;
-    }
-    NGT::ObjectDistances addedObjects;
-    for (auto &object : cluster) {
-      NGT::GraphNode &node = *graph.GraphIndex::getNode(object.id);
-      size_t c             = 0;
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      auto &allocator = graph.getObjectSpace().getRepository().getAllocator();
-      for (size_t i = 0; i < node.size() && c < nOfEdges; i++, c++) {
-        if (!isMember[node.at(i, allocator).id]) {
-          addedObjects.emplace_back(node.at(i, allocator));
-          addedObjects.back().distance       = std::numeric_limits<float>::max();
-          isMember[node.at(i, allocator).id] = true;
-        }
-      }
-#else
-      for (auto &o : node) {
-        if (!isMember[o.id]) {
-          addedObjects.emplace_back(o);
-          addedObjects.back().distance = std::numeric_limits<float>::max();
-          isMember[o.id]               = true;
-        }
-        if (++c >= nOfEdges) break;
-      }
-#endif
-    }
-    nOfAddedNodes += addedObjects.size();
-    expandedCluster.insert(expandedCluster.end(), addedObjects.begin(), addedObjects.end());
-    NGT::ObjectDistances nextAddedObjects;
-    for (size_t cnt = 0; cnt < k; cnt++) {
-      for (auto &object : addedObjects) {
-        NGT::GraphNode &node = *graph.GraphIndex::getNode(object.id);
-        size_t c             = 0;
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-        auto &allocator = graph.getObjectSpace().getRepository().getAllocator();
-        for (size_t i = 0; i < node.size() && c < nOfEdges; i++, c++) {
-          if (!isMember[node.at(i, allocator).id]) {
-            nextAddedObjects.emplace_back(node.at(i, allocator));
-            addedObjects.back().distance       = std::numeric_limits<float>::max();
-            isMember[node.at(i, allocator).id] = true;
-          }
-        }
-#else
-        for (auto &o : node) {
-          if (!isMember[o.id]) {
-            nextAddedObjects.emplace_back(o);
-            addedObjects.back().distance = std::numeric_limits<float>::max();
-            isMember[o.id]               = true;
-          }
-          if (++c >= nOfEdges) break;
-        }
-#endif
-      }
-      nOfAddedNodes += nextAddedObjects.size();
-      expandedCluster.insert(expandedCluster.end(), nextAddedObjects.begin(), nextAddedObjects.end());
-      addedObjects = std::move(nextAddedObjects);
-      nextAddedObjects.clear();
-    }
-  }
-  std::cerr << "# of added objects=" << nOfAddedNodes << std::endl;
-}
-
-void addLeakedNodes(NGT::Index &index, NGT::Index &anng, std::vector<std::vector<NGT::ObjectID>> &seedNodes,
-                    std::vector<NGT::ObjectDistances> &clusterIds, std::vector<bool> &isClustered) {
-  NGT::ObjectSpace &objectSpace           = index.getObjectSpace();
-  NGT::ObjectRepository &objectRepository = objectSpace.getRepository();
-  size_t repositorySize                   = objectRepository.size();
-  size_t nOfAddedObjects                  = 0;
-  for (size_t nodeId = 1; nodeId < repositorySize; nodeId++) {
-    if (isClustered[nodeId]) {
-      continue;
-    }
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-    NGT::Object *optr =
-        anng.getObjectSpace().allocateObject(*anng.getObjectSpace().getRepository().get(nodeId));
-    NGT::Object &queryObject = *optr;
-#else
-    NGT::Object &queryObject = *anng.getObjectSpace().getRepository().get(nodeId);
-#endif
-    float minDistance          = std::numeric_limits<float>::max();
-    size_t closestClusterIndex = 0;
-    for (size_t j = 0; j < seedNodes.size(); j++) {
-      if (seedNodes[j].size() == 0) {
-        std::cerr << "warning! no seeds! But continue. " << j << std::endl;
-        continue;
-      }
-      const auto &seedNodeId = seedNodes[j][0];
-      float distance         = objectSpace.getComparator()(queryObject, *objectRepository.get(seedNodeId));
-      if (distance < minDistance) {
-        minDistance         = distance;
-        closestClusterIndex = j;
-      }
-    }
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-    anng.getObjectSpace().deleteObject(optr);
-#endif
-    clusterIds[closestClusterIndex].emplace_back(nodeId, minDistance);
-    nOfAddedObjects++;
-    isClustered[nodeId] = true;
-    std::cerr << "Node " << nodeId << " added to cluster of seed node " << seedNodes[closestClusterIndex][0]
-              << " with distance " << minDistance << std::endl;
-  }
-  std::cerr << "Total nodes added to clusters: " << nOfAddedObjects << std::endl;
-}
-
-void growForest(NGT::Index &index, std::vector<std::vector<NGT::ObjectID>> &seedNodes,
-                std::vector<NGT::ObjectDistances> &clusterIds, size_t incomingEdge, size_t outgoingEdge,
-                float epsilon) {
-  std::cerr << "growForest" << std::endl;
-  NGT::ObjectSpace &objectSpace           = index.getObjectSpace();
-  NGT::ObjectRepository &objectRepository = objectSpace.getRepository();
-  NGT::GraphIndex &graphIndex             = static_cast<NGT::GraphIndex &>(index.getIndex());
-  for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
-    for (const auto &clusterNode : clusterIds[seedidx]) {
-      if (objectRepository.isEmpty(clusterNode.id)) {
-        std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping." << std::endl;
-        continue;
-      }
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      NGT::Object *qoptr       = objectSpace.allocateObject(*objectRepository.get(clusterNode.id));
-      NGT::Object &queryObject = *qoptr;
-#else
-      NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
-#endif
-      NGT::ObjectDistances results;
-      NGT::SearchContainer searchContainer(queryObject);
-      searchContainer.setResults(&results);
-      searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
-      searchContainer.setEdgeSize(0);
-      searchContainer.setEpsilon(epsilon);
-      NGT::ObjectDistances seeds;
-      seeds.reserve(seedNodes[seedidx].size());
-      for (auto &seed : seedNodes[seedidx]) {
-        seeds.emplace_back(NGT::ObjectDistance(seed, 0.0));
-      }
-      index.search(searchContainer, seeds);
-      size_t edgeCount = 0;
-      for (size_t idx = 0; idx < results.size(); idx++) {
-        const auto &result = results[idx];
-        if (result.id == clusterNode.id) {
-          continue;
-        }
-        try {
-          if (edgeCount < incomingEdge) {
-            graphIndex.addEdge(result.id, clusterNode.id, result.distance, false);
-          }
-          if (edgeCount < outgoingEdge) {
-            graphIndex.addEdge(clusterNode.id, result.id, result.distance, false);
-          }
-        } catch (...) {
-        }
-        edgeCount++;
-      }
-    }
-  }
-}
-
-void growForestMultiThread(NGT::Index &index, std::vector<std::vector<NGT::ObjectID>> &seedNodes,
-                           std::vector<NGT::ObjectDistances> &clusterIds, size_t incomingEdge,
-                           size_t outgoingEdge, float epsilon) {
-  std::cerr << "growForestMultiThread" << std::endl;
-  NGT::ObjectSpace &objectSpace           = index.getObjectSpace();
-  NGT::ObjectRepository &objectRepository = objectSpace.getRepository();
-  NGT::GraphIndex &graphIndex             = static_cast<NGT::GraphIndex &>(index.getIndex());
-#pragma omp parallel for
-  for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
-    for (const auto &clusterNode : clusterIds[seedidx]) {
-      if (objectRepository.isEmpty(clusterNode.id)) {
-        std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping." << std::endl;
-        continue;
-      }
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      NGT::Object *qoptr       = objectSpace.allocateObject(*objectRepository.get(clusterNode.id));
-      NGT::Object &queryObject = *qoptr;
-#else
-      NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
-#endif
-      NGT::ObjectDistances results;
-      NGT::SearchContainer searchContainer(queryObject);
-      searchContainer.setResults(&results);
-      searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
-      searchContainer.setEdgeSize(0);
-      searchContainer.setEpsilon(epsilon);
-      NGT::ObjectDistances seeds;
-      seeds.reserve(seedNodes[seedidx].size());
-      for (auto &seed : seedNodes[seedidx]) {
-        seeds.emplace_back(NGT::ObjectDistance(seed, 0.0));
-      }
-      index.search(searchContainer, seeds);
-      size_t edgeCount = 0;
-      for (size_t idx = 0; idx < results.size(); idx++) {
-        const auto &result = results[idx];
-        if (result.id == clusterNode.id) {
-          continue;
-        }
-        try {
-          if (edgeCount < incomingEdge) {
-            graphIndex.addEdge(result.id, clusterNode.id, result.distance, false);
-          }
-          if (edgeCount < outgoingEdge) {
-            graphIndex.addEdge(clusterNode.id, result.id, result.distance, false);
-          }
-        } catch (...) {
-        }
-        edgeCount++;
-      }
-    }
-  }
-}
-
-void growForestParallel(NGT::Index &index, std::vector<std::vector<NGT::ObjectID>> &seedNodes,
-                        std::vector<NGT::ObjectDistances> &clusterIds, size_t incomingEdge,
-                        size_t outgoingEdge, float epsilon) {
-  NGT::ObjectSpace &objectSpace           = index.getObjectSpace();
-  NGT::ObjectRepository &objectRepository = objectSpace.getRepository();
-  NGT::GraphIndex &graphIndex             = static_cast<NGT::GraphIndex &>(index.getIndex());
-  bool done                               = false;
-  for (size_t idx = 0; !done; idx++) {
-    done = true;
-    for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
-      if (idx >= clusterIds[seedidx].size()) {
-        continue;
-      }
-      done = false;
-      std::cerr << clusterIds[seedidx][idx] << std::endl;
-      const auto &clusterNode = clusterIds[seedidx][idx];
-      if (objectRepository.isEmpty(clusterNode.id)) {
-        std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping." << std::endl;
-        continue;
-      }
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      NGT::Object *qoptr       = objectSpace.allocateObject(*objectRepository.get(clusterNode.id));
-      NGT::Object &queryObject = *qoptr;
-#else
-      NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
-#endif
-      NGT::ObjectDistances results;
-      NGT::SearchContainer searchContainer(queryObject);
-      searchContainer.setResults(&results);
-      searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
-      searchContainer.setEdgeSize(0);
-      searchContainer.setEpsilon(epsilon);
-      NGT::ObjectDistances seeds;
-      seeds.emplace_back(clusterIds[seedidx][0]);
-      index.search(searchContainer, seeds);
-      size_t edgeCount = 0;
-
-      for (size_t ridx = 0; ridx < results.size(); ridx++) {
-        const auto &result = results[ridx];
-        if (result.id == clusterNode.id) {
-          continue;
-        }
-        try {
-          if (edgeCount < incomingEdge) {
-            graphIndex.addEdge(result.id, clusterNode.id, result.distance, false);
-          }
-          if (edgeCount < outgoingEdge) {
-            graphIndex.addEdge(clusterNode.id, result.id, result.distance, false);
-          }
-        } catch (...) {
-        }
-        edgeCount++;
-      }
-    }
-  }
-}
-
-void growForestParallelMultiThread(NGT::Index &index, std::vector<std::vector<NGT::ObjectID>> &seedNodes,
-                                   std::vector<NGT::ObjectDistances> &clusterIds, size_t incomingEdge,
-                                   size_t outgoingEdge, float epsilon) {
-
-  NGT::ObjectSpace &objectSpace           = index.getObjectSpace();
-  NGT::ObjectRepository &objectRepository = objectSpace.getRepository();
-  NGT::GraphIndex &graphIndex             = static_cast<NGT::GraphIndex &>(index.getIndex());
-
-  bool done = false;
-  for (size_t idx = 0; !done; idx++) {
-    done = true;
-    std::vector<std::vector<std::tuple<NGT::ObjectID, NGT::ObjectID, float>>> edges(seedNodes.size());
-#pragma omp parallel for
-    for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
-      if (idx >= clusterIds[seedidx].size()) {
-        continue;
-      }
-      done                    = false;
-      const auto &clusterNode = clusterIds[seedidx][idx];
-      if (objectRepository.isEmpty(clusterNode.id)) {
-        std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping." << std::endl;
-        continue;
-      }
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      NGT::Object *qoptr       = objectSpace.allocateObject(*objectRepository.get(clusterNode.id));
-      NGT::Object &queryObject = *qoptr;
-#else
-      NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
-#endif
-      NGT::ObjectDistances results;
-      NGT::SearchContainer searchContainer(queryObject);
-      searchContainer.setResults(&results);
-      searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
-      searchContainer.setEdgeSize(0);
-      searchContainer.setEpsilon(epsilon);
-      NGT::ObjectDistances seeds;
-      seeds.reserve(seedNodes[seedidx].size());
-      for (auto &seed : seedNodes[seedidx]) {
-        seeds.emplace_back(NGT::ObjectDistance(seed, 0.0));
-      }
-      index.search(searchContainer, seeds);
-      size_t edgeCount = 0;
-      // Add edges from seed node to each cluster member
-
-      for (size_t ridx = 0; ridx < results.size(); ridx++) {
-        const auto &result = results[ridx];
-        if (result.id == clusterNode.id) {
-          continue;
-        }
-        if (edgeCount < incomingEdge) {
-          edges[seedidx].emplace_back(result.id, clusterNode.id, result.distance);
-        }
-        if (edgeCount < outgoingEdge) {
-          edges[seedidx].emplace_back(clusterNode.id, result.id, result.distance);
-        }
-        edgeCount++;
-      }
-    }
-    for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
-      for (const auto &edge : edges[seedidx]) {
-        try {
-          graphIndex.addEdge(std::get<0>(edge), std::get<1>(edge), std::get<2>(edge), false);
-        } catch (...) {
-        }
-      }
-    }
-  }
-}
-
-void growForestIncrementalParallelMultiThread(NGT::Index &index,
-                                              std::vector<std::vector<NGT::ObjectID>> &seedNodes,
-                                              std::vector<NGT::ObjectDistances> &clusterIds,
-                                              size_t incomingEdge, size_t outgoingEdge, float epsilon) {
-  NGT::ObjectSpace &objectSpace           = index.getObjectSpace();
-  NGT::ObjectRepository &objectRepository = objectSpace.getRepository();
-  NGT::GraphIndex &graphIndex             = static_cast<NGT::GraphIndex &>(index.getIndex());
-
-  bool done        = false;
-  size_t batchSize = 8;
-  for (size_t idx = 0; !done; idx++) {
-    std::cerr << "Processing the rank=" << idx << std::endl;
-    done = true;
-    std::vector<size_t> seedidxes;
-    seedidxes.reserve(batchSize);
-    for (size_t sidx = 0;; sidx++) {
-      if (seedidxes.size() >= batchSize || sidx >= seedNodes.size()) {
-        std::vector<std::vector<std::tuple<NGT::ObjectID, NGT::ObjectID, float>>> edges(seedidxes.size());
-#pragma omp parallel for
-        for (size_t seedidxesidx = 0; seedidxesidx < seedidxes.size(); seedidxesidx++) {
-          size_t seedidx = seedidxes[seedidxesidx];
-          if (seedidx >= seedNodes.size()) {
-            continue;
-          }
-          if (idx >= clusterIds[seedidx].size()) {
-            continue;
-          }
-          done                    = false;
-          const auto &clusterNode = clusterIds[seedidx][idx];
-          if (objectRepository.isEmpty(clusterNode.id)) {
-            std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping." << std::endl;
-            continue;
-          }
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-          NGT::Object *optr        = objectSpace.allocateObject(*objectRepository.get(clusterNode.id));
-          NGT::Object &queryObject = *optr;
-#else
-          NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
-#endif
-          NGT::ObjectDistances results;
-          NGT::SearchContainer searchContainer(queryObject);
-          searchContainer.setResults(&results);
-          searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
-          searchContainer.setEdgeSize(0);
-          searchContainer.setEpsilon(epsilon);
-          NGT::ObjectDistances seeds;
-          seeds.reserve(seedNodes[seedidx].size());
-          for (auto &seed : seedNodes[seedidx]) {
-            seeds.emplace_back(NGT::ObjectDistance(seed, 0.0));
-          }
-          index.search(searchContainer, seeds);
-          size_t edgeCount = 0;
-          for (size_t ridx = 0; ridx < results.size(); ridx++) {
-            const auto &result = results[ridx];
-            if (result.id == clusterNode.id) {
-              continue;
-            }
-            if (edgeCount < incomingEdge) {
-              edges[seedidxesidx].emplace_back(result.id, clusterNode.id, result.distance);
-            }
-            if (edgeCount < outgoingEdge) {
-              edges[seedidxesidx].emplace_back(clusterNode.id, result.id, result.distance);
-            }
-            edgeCount++;
-          }
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-          objectSpace.deleteObject(optr);
-#endif
-        }
-        for (auto &sdedge : edges) {
-          for (const auto &edge : sdedge) {
-            try {
-              graphIndex.addEdge(std::get<0>(edge), std::get<1>(edge), std::get<2>(edge), false);
-            } catch (...) {
-            }
-          }
-        }
-        seedidxes.clear();
-        if (sidx >= seedNodes.size()) {
-          break;
-        }
-      }
-      if (idx >= clusterIds[sidx].size()) {
-        continue;
-      }
-      seedidxes.emplace_back(sidx);
-    }
-  }
-}
-
-void growForestForExpandedNodesFromGraph(NGT::Index &index, NGT::Index &anng,
-                                         std::vector<std::vector<NGT::ObjectID>> &seedNodes,
-                                         std::vector<NGT::ObjectDistances> &clusterIds,
-                                         std::vector<NGT::ObjectDistances> &expandedClusterIds,
-                                         size_t incomingEdge, size_t outgoingEdge) {
-
-  NGT::GraphIndex &graphIndex   = static_cast<NGT::GraphIndex &>(index.getIndex());
-  NGT::GraphAndTreeIndex &graph = dynamic_cast<NGT::GraphAndTreeIndex &>(anng.getIndex());
-  std::vector<std::vector<std::pair<NGT::ObjectID, NGT::ObjectDistance>>> addedEdges(clusterIds.size());
-  size_t nOfEdges = std::max(incomingEdge, outgoingEdge);
-
-#pragma omp parallel for
-  for (size_t idx = 0; idx < clusterIds.size(); idx++) {
-    auto &cluster         = clusterIds[idx];
-    auto &expandedCluster = expandedClusterIds[idx];
-    if (expandedCluster.size() == 0) {
-      std::cerr << "warning! no objects in the expanded cluster! But continue. " << idx << std::endl;
-      continue;
-    }
-    std::unordered_set<NGT::ObjectID> isMember;
-    for (auto &object : cluster) {
-      isMember.insert(object.id);
-    }
-    for (auto &object : seedNodes[idx]) {
-      isMember.insert(object);
-    }
-    if (isMember.size() == 0) {
-      std::cerr << "warning! no objects int the cluster! But continue. " << idx << std::endl;
-      continue;
-    }
-    for (auto &object : expandedCluster) {
-      NGT::GraphNode &node = *graph.GraphIndex::getNode(object.id);
-      size_t c             = 0;
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      auto &allocator = graph.getObjectSpace().getRepository().getAllocator();
-      for (size_t i = 0; i < node.size(); i++) {
-        if (isMember.count(node.at(i, allocator).id) == 0) {
-          continue;
-        }
-        if (c >= nOfEdges) break;
-        if (c < incomingEdge) {
-          try {
-            graphIndex.addEdge(node.at(i, allocator).id, object.id, node.at(i, allocator).distance, true);
-          } catch (...) {
-          };
-        }
-        if (c < outgoingEdge) {
-          addedEdges[idx].emplace_back(std::make_pair(object.id, node.at(i, allocator)));
-        }
-        c++;
-      }
-#else
-      for (auto &o : node) {
-        if (isMember.count(o.id) == 0) {
-          continue;
-        }
-        if (c >= nOfEdges) break;
-        if (c < incomingEdge) {
-          try {
-            graphIndex.addEdge(o.id, object.id, o.distance, true);
-          } catch (...) {
-          };
-        }
-        if (c < outgoingEdge) {
-          addedEdges[idx].emplace_back(std::make_pair(object.id, o));
-        }
-        c++;
-      }
-#endif
-    }
-  }
-
-  std::cerr << "end of extracting edges from anng" << std::endl;
-  for (auto &addedEdgesInCluster : addedEdges) {
-    for (size_t i = 0; i < addedEdgesInCluster.size(); i++) {
-      auto &edge = addedEdgesInCluster[i];
-      try {
-        graphIndex.addEdge(edge.first, edge.second.id, edge.second.distance, true);
-      } catch (...) {
-      };
-    }
-  }
-}
-
-void NGT::Command::constructForest(NGT::Args &args) {
-  const string usage = "Usage: ngt construct-forest target-index search-index(ANNG)";
-  string indexPath;
-  try {
-    indexPath = args.get("#1");
-  } catch (...) {
-    std::stringstream msg;
-    msg << "No index is specified." << std::endl;
-    msg << usage << std::endl;
-    NGTThrowException(msg);
-  }
-  string anngPath;
-  try {
-    anngPath = args.get("#2");
-  } catch (...) {
-    std::stringstream msg;
-    msg << "No ANNG is specified." << std::endl;
-    msg << usage << std::endl;
-    NGTThrowException(msg);
-  }
-  std::cerr << "constructForestGraph" << std::endl;
-  std::string clusterSizeStr = args.getString("c", "0"); // Size of clusters to form
-  size_t clusterSize         = 0;
-  float clusterSizeFactor    = 0.0;
-  if (clusterSizeStr.size() > 0 && clusterSizeStr[0] == 'x') {
-    clusterSizeFactor = NGT::Common::strtod(clusterSizeStr.substr(1));
-  } else {
-    clusterSize = NGT::Common::strtol(clusterSizeStr);
-  }
-  std::cerr << "Cluster size: " << clusterSize << ":" << clusterSizeFactor << std::endl;
-  std::string mode            = args.getString("m", "ipm");
-  std::string emode           = args.getString("M", "-");
-  size_t incomingEdge         = args.getl("i", 10);
-  size_t outgoingEdge         = args.getl("o", 10);
-  size_t incomingExternalEdge = args.getl("I", incomingEdge);
-  size_t outgoingExternalEdge = args.getl("O", outgoingEdge);
-  size_t epsilon              = args.getf("e", 0.0);
-  std::string hstr            = args.getString("H", "-");
-  size_t nOfHops              = 1;
-  size_t nOfEdgesForHop       = 5;
-  if (hstr != "-") {
-    vector<string> tokens;
-    NGT::Common::tokenize(hstr, tokens, ":");
-    if (tokens.size() >= 1) {
-      nOfHops = NGT::Common::strtod(tokens[0]);
-    }
-    if (tokens.size() >= 2) {
-      nOfEdgesForHop = NGT::Common::strtod(tokens[1]);
-    }
-  }
-  std::cerr << "Hops=" << nOfHops << ":" << nOfEdgesForHop << std::endl;
-  char clusterExpantion = args.getChar("E", 'h');
-  std::cerr << "incomingEdge: " << incomingEdge << " outgoingEdge: " << outgoingEdge << std::endl;
-  try {
-    NGT::Index::create(indexPath, anngPath, true);
-    std::filesystem::copy_file(anngPath + "/obj", indexPath + "/obj",
-                               std::filesystem::copy_options::overwrite_existing);
-    std::filesystem::copy_file(anngPath + "/tre", indexPath + "/tre",
-                               std::filesystem::copy_options::overwrite_existing);
-
-    std::cerr << "Opening index: " << indexPath << std::endl;
-    NGT::Index index(indexPath);
-    std::cerr << "Index opened successfully." << std::endl;
-    size_t repositorySize = index.getObjectRepositorySize();
-    std::cerr << "Repository size: " << repositorySize << std::endl;
-
-    NGT::GraphIndex &graphIndex = static_cast<NGT::GraphIndex &>(index.getIndex());
-    std::cerr << "GraphIndex obtained." << std::endl;
-
-    NGT::ObjectSpace &objectSpace           = index.getObjectSpace();
-    NGT::ObjectRepository &objectRepository = objectSpace.getRepository();
-    NGT::Index anng(anngPath);
-    std::vector<bool> isClustered(repositorySize, false);
-    std::vector<NGT::ObjectDistances> clusterIds;
-    std::vector<std::vector<NGT::ObjectID>> seedNodes;
-    std::vector<Node::ID> leafIDs;
-    NGT::GraphAndTreeIndex &graphAndTreeIndex = static_cast<NGT::GraphAndTreeIndex &>(index.getIndex());
-    NGT::Timer timer;
-    timer.start();
-    getClustersFromTree(graphAndTreeIndex, leafIDs, clusterIds, isClustered);
-    timer.stop();
-    std::cerr << "Extracted all objects from the leaves. Timer=" << timer << std::endl;
-    timer.start();
-#define USE_SEEDS_FROM_TREE
-#if defined(USE_SEEDS_FROM_TREE)
-    {
-      for (auto &cluster : clusterIds) {
-        NGT::ObjectDistances seeds = cluster;
-        graphAndTreeIndex.getSeedsFromObjects(36, seeds);
-        std::vector<NGT::ObjectID> sds;
-        sds.reserve(seeds.size());
-        for (auto &seed : seeds) {
-          sds.emplace_back(seed.id);
-        }
-        seedNodes.emplace_back(std::move(sds));
-      }
-    }
-#elif defined(USE_CENTROID_SEEDS)
-    {
-      for (size_t idx = 0; clusterIds.size(); idx++) {
-        size_t count = 0;
-        std::vector<float> centroid;
-        for (auto &obj : clusterIds[idx]) {
-          std::vector<float> v;
-          if (objectRepository.isEmpty(obj.id)) {
-            continue;
-          }
-          objectSpace.getObject(obj.id, v);
-          if (centroid.empty()) {
-            centroid = v;
-          } else {
-            for (size_t i = 0; i < v.size(); ++i) {
-              centroid[i] += v[i];
-            }
-          }
-          count++;
-        }
-        for (auto &value : centroid) {
-          value /= count; // Calculate the mean
-        }
-        NGT::Object *cent = objectSpace.allocateNormalizedObject(centroid);
-        for (auto &obj : clusterIds[idx]) {
-          NGT::Object &o = *objectRepository.get(obj.id);
-          obj.distance   = objectSpace.getComparator()(*cent, o);
-        }
-        objectSpace.deleteObject(cent);
-        std::cerr << "the head of objects in leaf " << clusterIds[idx][0].id << std::endl;
-        std::sort(clusterIds.begin(), clusterIds.end());
-        std::cerr << "the centroid of objects in leaf " << clusterIds[idx][0].id << std::endl;
-      }
-    }
-#elif defined(USE_RANDOM_SEEDS)
-    {
-      std::random_device rd;
-      std::mt19937 gen(rd());
-      std::uniform_int_distribution<> dis(1, repositorySize - 1);
-
-      std::set<NGT::ObjectID> randomNodeIds;
-      while (randomNodeIds.size() < 10) {
-        NGT::ObjectID randomId = dis(gen);
-        if (!graphRepository.isEmpty(randomId)) {
-          randomNodeIds.insert(randomId);
-        }
-      }
-
-      for (const auto &id : randomNodeIds) {
-        seedNodes.emplace_back(id);
-      }
-      std::cerr << "Randomly selected seed nodes: " << seedNodes.size() << std::endl;
-      for (const auto &id : seedNodes) {
-        std::cerr << id << " ";
-      }
-      std::cerr << std::endl;
-    }
-#endif
-    timer.stop();
-    std::cerr << "Extracted seads. Timer=" << timer << std::endl;
-
-    timer.start();
-    std::vector<NGT::ObjectDistances> expandedClusterIds;
-    if (clusterExpantion == 's' || clusterExpantion == 'S') {
-      expandClustersBySearch(clusterSize, clusterSizeFactor, anng, clusterIds, expandedClusterIds,
-                             isClustered);
-    } else if (clusterExpantion == 'h' || clusterExpantion == 'H') {
-      expandClustersToKHops(anng, clusterIds, expandedClusterIds, isClustered, nOfHops, nOfEdgesForHop);
-    }
-    if (clusterExpantion == 's' || clusterExpantion == 'h') {
-      size_t nOfAddedNodes = 0;
-      for (size_t i = 0; i < clusterIds.size(); i++) {
-        nOfAddedNodes += expandedClusterIds[i].size();
-        clusterIds[i].insert(clusterIds[i].end(), expandedClusterIds[i].begin(), expandedClusterIds[i].end());
-      }
-      std::cerr << "# of the added objects=" << nOfAddedNodes << ":" << (nOfAddedNodes / clusterIds.size())
-                << std::endl;
-      expandedClusterIds.clear();
-    }
-    timer.stop();
-    std::cerr << "Expanded the clusters. Timer=" << timer << std::endl;
-
-    timer.start();
-    addLeakedNodes(index, anng, seedNodes, clusterIds, isClustered);
-    timer.stop();
-    std::cerr << "added leadked nodes. Timer= " << timer << std::endl;
-
-    timer.start();
-    for (size_t i = 0; i < clusterIds.size(); i++) {
-      std::unordered_set<NGT::ObjectID> seeds;
-      for (auto &seed : seedNodes[i]) {
-        seeds.insert(seed);
-      }
-      std::unordered_set<NGT::ObjectID> toDelete;
-      for (auto &id : clusterIds[i]) {
-        if (seeds.find(id.id) != seeds.end()) {
-          toDelete.insert(id.id);
-          seeds.erase(id.id);
-          if (seeds.empty()) {
-            break;
-          }
-        }
-      }
-      if (!seeds.empty()) {
-        std::cerr << "Warning! Cannot find the seeds in the cluster. " << seeds.size() << ":" << i
-                  << std::endl;
-      }
-      if (!toDelete.empty()) {
-        auto it = std::remove_if(
-            clusterIds[i].begin(), clusterIds[i].end(),
-            [&toDelete](const NGT::ObjectDistance &od) { return toDelete.find(od.id) != toDelete.end(); });
-        clusterIds[i].erase(it, clusterIds[i].end());
-      }
-    }
-    timer.stop();
-    std::cerr << "removed seeds from the clusters. Timer=" << timer << std::endl;
-
-    std::cerr << "object repository size: " << repositorySize << ":" << objectRepository.size() << std::endl;
-    timer.start();
-    for (size_t nodeId = repositorySize - 1; nodeId > 0; nodeId--) {
-      if (objectRepository.isEmpty(nodeId)) {
-        continue;
-      }
-      try {
-        NGT::ObjectDistances empty;
-        graphIndex.repository.insert(nodeId, empty);
-      } catch (NGT::Exception &err) {
-        std::cerr << "Error adding object " << nodeId << ": " << err.what() << std::endl;
-        continue;
-      }
-      if (nodeId % 100000 == 0) {
-        std::cerr << "Added object " << nodeId << " to graph repository." << std::endl;
-      }
-    }
-    timer.stop();
-    std::cerr << "All empty objects were added to the graph. Timer=" << timer << std::endl;
-
-    timer.start();
-    size_t nOfEmptyClusters = 0;
-#pragma omp parallel for
-    for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
-      if (clusterIds[seedidx].empty()) {
-        nOfEmptyClusters++;
-        continue;
-      }
-      {
-        std::sort(clusterIds[seedidx].begin(), clusterIds[seedidx].end());
-      }
-    }
-    timer.stop();
-    if (nOfEmptyClusters != 0) {
-      std::cerr << "Warning! Found empty clusters. " << nOfEmptyClusters << std::endl;
-    }
-    std::cerr << "sorted objects to add to the graph. Timer=" << timer << std::endl;
-    timer.start();
-    if (mode == "s" || mode == "-") {
-      if (expandedClusterIds.empty()) {
-        growForest(index, seedNodes, clusterIds, incomingEdge, outgoingEdge, epsilon);
-      } else {
-        growForestMultiThread(index, seedNodes, clusterIds, incomingEdge, outgoingEdge, epsilon);
-      }
-    } else if (mode == "p") {
-      growForestParallel(index, seedNodes, clusterIds, incomingEdge, outgoingEdge, epsilon);
-    } else if (mode == "pm") {
-      growForestParallelMultiThread(index, seedNodes, clusterIds, incomingEdge, outgoingEdge, epsilon);
-    } else if (mode == "ipm") {
-      growForestIncrementalParallelMultiThread(index, seedNodes, clusterIds, incomingEdge, outgoingEdge,
-                                               epsilon);
+    std::string clusterSizeStr = args.getString("c", "0");
+    size_t clusterSize         = 0;
+    float clusterSizeFactor    = 0.0;
+    if (clusterSizeStr.size() > 0 && clusterSizeStr[0] == 'x') {
+      clusterSizeFactor = NGT::Common::strtod(clusterSizeStr.substr(1));
     } else {
+      clusterSize = NGT::Common::strtol(clusterSizeStr);
     }
-    timer.stop();
-    std::cerr << "grew the forest. Timer=" << timer << std::endl;
-    timer.start();
-    if (!expandedClusterIds.empty() && (mode == "s" || mode == "-")) {
-      if (emode == "s") {
-        growForest(index, seedNodes, expandedClusterIds, incomingExternalEdge, outgoingExternalEdge, epsilon);
-      } else if (emode == "ipm") {
-        growForestIncrementalParallelMultiThread(index, seedNodes, expandedClusterIds, incomingExternalEdge,
-                                                 outgoingExternalEdge, epsilon);
-      } else if (emode == "g") {
-        growForestForExpandedNodesFromGraph(index, anng, seedNodes, clusterIds, expandedClusterIds,
-                                            incomingExternalEdge, outgoingExternalEdge);
+    std::string mode            = args.getString("m", "ipm");
+    std::string emode           = args.getString("M", "-");
+    size_t incomingEdge         = args.getl("i", 10);
+    size_t outgoingEdge         = args.getl("o", 10);
+    size_t incomingExternalEdge = args.getl("I", incomingEdge);
+    size_t outgoingExternalEdge = args.getl("O", outgoingEdge);
+    float epsilon               = args.getf("e", 0.0);
+    std::string hstr            = args.getString("H", "-");
+    size_t nOfHops              = 1;
+    size_t nOfEdgesForHop       = 5;
+    if (hstr != "-") {
+      vector<string> tokens;
+      NGT::Common::tokenize(hstr, tokens, ":");
+      if (tokens.size() >= 1) {
+        nOfHops = NGT::Common::strtod(tokens[0]);
+      }
+      if (tokens.size() >= 2) {
+        nOfEdgesForHop = NGT::Common::strtod(tokens[1]);
       }
     }
-    timer.stop();
-    std::cerr << "grew the forest outside clusters. Timer=" << timer << std::endl;
-    index.save();
-  } catch (NGT::Exception &err) {
-    std::stringstream msg;
-    msg << "Error " << err.what() << std::endl;
-    msg << usage << std::endl;
-    NGTThrowException(msg);
-  } catch (...) {
-    std::stringstream msg;
-    msg << "Error" << std::endl;
-    msg << usage << std::endl;
-    NGTThrowException(msg);
+    char clusterExpansion = args.getChar("E", 'h');
+    NGT::Index::buildForest(indexPath, anngPath, clusterSize, clusterSizeFactor, mode, emode, incomingEdge,
+                            outgoingEdge, incomingExternalEdge, outgoingExternalEdge, epsilon, nOfHops,
+                            nOfEdgesForHop, clusterExpansion);
+
+#else
+    NGTThrowException("construct-forest is not available because NGT_FOREST is disabled.");
+#endif
+  } else {
+#ifdef NGT_ADVANCED_FOREST
+    const string usage = "Usage: ngt construct-advanced-forest [-m r|f|s] [-S seedSize] [-R] target-index";
+    args.parse("R");
+    string indexPath;
+    try {
+      indexPath = args.get("#1");
+    } catch (...) {
+      std::stringstream msg;
+      msg << "No index is specified." << std::endl;
+      msg << usage << std::endl;
+      NGTThrowException(msg);
+    }
+    char mode        = args.getChar("m", '-');
+    size_t seedSize  = args.getl("S", 10);
+    bool rebuildTree = args.getBool("R");
+    NGT::Index::buildAdvancedForest(indexPath, mode, seedSize, rebuildTree);
+#else
+    NGTThrowException("build-forest without -l is not available because NGT_ADVANCED_FOREST is disabled.");
+#endif
   }
 }
 #endif

@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2025 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,9 +17,8 @@
 
 #include "NGT/defines.h"
 
-#if defined(NGT_PQ4) &&                                                               \
-    (defined(NGT_NO_SIMD) || (defined(__x86_64__) && defined(NGT_NO_AVX)) ||          \
-     (!defined(__x86_64__) && !defined(NGT_NEON)))
+#if defined(NGT_PQ4) && (defined(NGT_NO_SIMD) || (defined(__x86_64__) && defined(NGT_NO_AVX)) ||             \
+                         (!defined(__x86_64__) && !defined(NGT_NEON)))
 
 #include "NGT/Common.h"
 #include "NGT/PrimitiveComparator.h"

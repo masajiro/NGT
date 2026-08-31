@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2020 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,13 +19,10 @@
 #include "NGT/NGTQ/QuantizedBlobGraph.h"
 #include "NGT/NGTQ/Optimizer.h"
 
-#ifdef NGTQG_X86SIMDSORT
-#warning "*** X86simdsort is enabled for QG. ***"
-#endif
-
 #ifdef NGTQ_QBG
 void NGTQG::QuantizedGraphRepository::construct(NGT::GraphRepository &graphRepository,
-                                                NGTQ::Index &quantizedIndex, size_t maxNoOfEdges) {
+                                                NGTQ::Index &quantizedIndex, size_t maxNoOfEdges,
+                                                size_t edgeTrimThreshold) {
   NGTQ::InvertedIndexEntry<uint16_t> invertedIndexObjects(numOfSubspaces);
   quantizedIndex.getQuantizer().extractInvertedIndexObject(invertedIndexObjects);
   std::cerr << "inverted index object size=" << invertedIndexObjects.size() << std::endl;
@@ -39,6 +37,7 @@ void NGTQG::QuantizedGraphRepository::construct(NGT::GraphRepository &graphRepos
 
   PARENT::resize(graphRepository.size());
 
+  std::vector<size_t> edgeHistogram;
   for (size_t id = 1; id < graphRepository.size(); id++) {
     if ((graphRepository.size() > 100) && ((id % ((graphRepository.size() - 1) / 100)) == 0)) {
       std::cerr << "# of processed objects=" << id << "/" << (graphRepository.size() - 1) << "("
@@ -54,6 +53,15 @@ void NGTQG::QuantizedGraphRepository::construct(NGT::GraphRepository &graphRepos
     }
     NGT::GraphNode &node = *graphRepository.VECTOR::get(id);
     size_t numOfEdges    = node.size() < maxNoOfEdges ? node.size() : maxNoOfEdges;
+    if (edgeTrimThreshold > 0 && numOfEdges > 32) {
+      if (numOfEdges % 32 < edgeTrimThreshold) {
+        numOfEdges = numOfEdges / 32 * 32;
+      }
+    }
+    if (numOfEdges >= edgeHistogram.size()) {
+      edgeHistogram.resize(numOfEdges + 1);
+    }
+    edgeHistogram[numOfEdges]++;
     std::vector<uint32_t> ids;
     ids.reserve(numOfEdges);
     (*this)[id].nOfObjects = numOfEdges;
@@ -115,6 +123,14 @@ void NGTQG::QuantizedGraphRepository::construct(NGT::GraphRepository &graphRepos
     NGT::alignedFree64(qobjs);
     memcpy((*this)[id].ids, ids.data(), sizeof(uint32_t) * ids.size());
   }
+  size_t total = 0;
+  std::cerr << "Edge distribution" << std::endl;
+  for (size_t eno = 0; eno < edgeHistogram.size(); eno++) {
+    if (edgeHistogram[eno] == 0) continue;
+    std::cerr << eno << ":" << edgeHistogram[eno] << std::endl;
+    total += edgeHistogram[eno];
+  }
+  std::cerr << "# of the nodes=" << total << std::endl;
 }
 
 void NGTQG::QuantizedGraphRepository::serialize(std::ofstream &os, NGT::ObjectSpace *objspace) {
@@ -168,29 +184,7 @@ void NGTQG::QuantizedGraphRepository::deserialize(std::ifstream &is, NGT::Object
 #else
       size_t streamSize = quantizedObjectProcessingStream.getUint4StreamSize(nobjs);
 #endif
-      size_t idsSize = sizeof(uint32_t) * nobjs;
-#ifdef NGTQG_RESIZED_NODE
-      (*i).nOfObjects = nobjs > 32 ? (nobjs & ~(16 - 1)) : nobjs;
-      uint8_t objects[streamSize];
-      uint32_t ids[nobjs];
-      NGT::Serializer::read(is, reinterpret_cast<uint8_t *>(ids), idsSize);
-#ifdef NGTQ_OBGRAPH
-      if (graphType == NGTQ::GraphTypeObjectBlobGraph) {
-        NGT::Serializer::read(is, (*i).blobIDs);
-      }
-#endif
-      NGT::Serializer::read(is, objects, streamSize);
-#ifdef NGT_IVI
-      size_t packedStreamSize = quantizer.getQuantizedObjectDistance().getSizeOfCluster((*i).nOfObjects);
-#else
-      size_t packedStreamSize = quantizedObjectProcessingStream.getUint4StreamSize((*i).nOfObjects);
-#endif
-      size_t packedIdsSize = sizeof(uint32_t) * (*i).nOfObjects;
-      (*i).objects = reinterpret_cast<uint8_t *>(NGT::alignedAlloc64(packedStreamSize + packedIdsSize));
-      (*i).ids     = reinterpret_cast<uint32_t *>(static_cast<uint8_t *>((*i).objects) + packedStreamSize);
-      memcpy((*i).objects, &objects[0], packedStreamSize);
-      memcpy(reinterpret_cast<uint8_t *>((*i).ids), &ids[0], packedIdsSize);
-#else
+      size_t idsSize  = sizeof(uint32_t) * nobjs;
       (*i).nOfObjects = nobjs;
       (*i).objects    = reinterpret_cast<uint8_t *>(NGT::alignedAlloc64(streamSize + idsSize));
       (*i).ids        = reinterpret_cast<uint32_t *>(static_cast<uint8_t *>((*i).objects) + streamSize);
@@ -201,7 +195,6 @@ void NGTQG::QuantizedGraphRepository::deserialize(std::ifstream &is, NGT::Object
       }
 #endif
       NGT::Serializer::read(is, static_cast<uint8_t *>((*i).objects), streamSize);
-#endif
     }
   } catch (NGT::Exception &err) {
     std::stringstream msg;
@@ -211,7 +204,7 @@ void NGTQG::QuantizedGraphRepository::deserialize(std::ifstream &is, NGT::Object
 }
 
 void NGTQG::Index::quantize(const std::string indexPath, size_t dimensionOfSubvector, size_t maxNumOfEdges,
-                            bool verbose) {
+                            size_t edgeTrimThreshold, bool verbose) {
   {
     NGT::Index index(indexPath);
     const std::string quantizedIndexPath = indexPath + "/qg";
@@ -250,7 +243,7 @@ void NGTQG::Index::quantize(const std::string indexPath, size_t dimensionOfSubve
 
       QBG::Index::buildNGTQ(quantizedIndexPath, verbose);
 
-      NGTQG::Index::realign(indexPath, maxNumOfEdges, verbose);
+      NGTQG::Index::realign(indexPath, maxNumOfEdges, edgeTrimThreshold, verbose);
     }
   }
 }

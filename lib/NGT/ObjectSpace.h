@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -221,6 +222,7 @@ class ObjectSpace {
 #endif
     virtual ~Comparator() {}
   };
+  using RawDistanceFunc = double (*)(const void *, const void *, size_t);
   enum DistanceType {
     DistanceTypeNone             = -1,
     DistanceTypeL1               = 0,
@@ -258,8 +260,8 @@ class ObjectSpace {
 
   ObjectSpace(size_t d)
       : dimension(d), distanceType(DistanceTypeNone), comparator(0), comparatorForSearch(0),
-        normalization(false), prefetchOffset(-1), prefetchSize(-1), quantizationScale(0.0),
-        quantizationOffset(0.0), magnitude(-1) {}
+        primitiveComparator(nullptr), normalization(false), prefetchOffset(-1), prefetchSize(-1),
+        quantizationScale(0.0), quantizationOffset(0.0), magnitude(-1) {}
   virtual ~ObjectSpace() {
     if (comparator != 0) {
       delete comparator;
@@ -284,6 +286,7 @@ class ObjectSpace {
 #endif
 
   Comparator &getComparator() { return *comparator; }
+  RawDistanceFunc getPrimitiveComparator() const { return primitiveComparator; }
   Comparator &getComparatorForSearch() {
     if (comparatorForSearch != 0) {
       return *comparatorForSearch;
@@ -315,6 +318,7 @@ class ObjectSpace {
   virtual size_t getSize()                                                                      = 0;
   virtual size_t getSizeOfElement()                                                             = 0;
   virtual size_t getByteSizeOfObject()                                                          = 0;
+  virtual size_t getByteSizeOfPaddedObject()                                                    = 0;
   virtual Object *allocateNormalizedObject(const std::string &textLine, const std::string &sep) = 0;
   virtual Object *allocateNormalizedObject(const std::vector<double> &obj)                      = 0;
   virtual Object *allocateNormalizedObject(const std::vector<float> &obj)                       = 0;
@@ -606,6 +610,7 @@ class ObjectSpace {
   DistanceType distanceType;
   Comparator *comparator;
   Comparator *comparatorForSearch;
+  RawDistanceFunc primitiveComparator;
   bool normalization;
   int32_t prefetchOffset;
   int32_t prefetchSize;

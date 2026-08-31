@@ -95,7 +95,7 @@ class SharedMemoryAllocator {
   }
 
   void *construct(const std::string &filePath, size_t memorysize = 0) {
-    file = filePath; // debug
+    file = filePath;
 #ifdef SMA_TRACE
     std::cerr << "ObjectSharedMemoryAllocator::construct: file " << filePath << std::endl;
 #endif

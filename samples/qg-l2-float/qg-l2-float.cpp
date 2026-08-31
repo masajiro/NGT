@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
   size_t maxNumberOfEdges     = 50;
   try {
     std::cout << "quantizing the index..." << std::endl;
-    NGTQG::Index::quantize(indexPath, dimensionOfSubvector, maxNumberOfEdges, true);
+    NGTQG::Index::quantize(indexPath, dimensionOfSubvector, maxNumberOfEdges, 0, true);
   } catch (NGT::Exception &err) {
     cerr << "Error " << err.what() << endl;
     return 1;

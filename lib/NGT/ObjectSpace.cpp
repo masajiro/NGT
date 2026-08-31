@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2025 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -500,7 +501,7 @@ NGT::ObjectSpace::ObjectType NGT::ObjectSpace::getEstimatedObjectType() {
     return ObjectType::Uint8;
   }
 
-  NGT::ObjectSpace::ObjectType otype = dim < 100 ? ObjectType::Float : ObjectType::Float16;
+  NGT::ObjectSpace::ObjectType otype = dim < 200 ? ObjectType::Float : ObjectType::Float16;
 
   for (size_t id = 1; id < size; id++) {
     if (repo[id] == nullptr) {

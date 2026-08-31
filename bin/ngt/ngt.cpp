@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -105,9 +106,9 @@ int main(int argc, char **argv) {
       ngt.rebuild(args);
     } else if (command == "prep-pq") {
       ngt.preprocessForPQ(args);
-#ifdef NGT_FOREST
-    } else if (command == "construct-forest") {
-      ngt.constructForest(args);
+#if defined(NGT_FOREST) || defined(NGT_ADVANCED_FOREST)
+    } else if (command == "build-forest" || command == "construct-forest") {
+      ngt.buildForest(args);
 #endif
 #ifndef NGT_SHARED_MEMORY_ALLOCATOR
     } else if (command == "extract-query") {

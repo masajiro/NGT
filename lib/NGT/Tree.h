@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -292,9 +293,9 @@ class DVPTree {
   }
 #endif // NGT_SHARED_MEMORY_ALLOCATOR
 
-  void insert(InsertContainer &iobj);
+  NGT::ObjectID insert(InsertContainer &iobj);
 
-  void insert(InsertContainer &iobj, LeafNode *n);
+  NGT::ObjectID insert(InsertContainer &iobj, LeafNode *n);
 
   Node::ID split(InsertContainer &iobj, LeafNode &leaf);
 

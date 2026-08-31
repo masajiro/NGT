@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,7 +41,7 @@ void DVPTree::initialize(NGT::Property &prop) {
 #endif
 }
 
-void DVPTree::insert(InsertContainer &iobj) {
+NGT::ObjectID DVPTree::insert(InsertContainer &iobj) {
   SearchContainer q(iobj.object);
   q.mode   = SearchContainer::SearchLeaf;
   q.vptree = this;
@@ -51,12 +52,10 @@ void DVPTree::insert(InsertContainer &iobj) {
   iobj.vptree = this;
   assert(q.nodeID.getType() == Node::ID::Leaf);
   LeafNode *ln = (LeafNode *)getNode(q.nodeID);
-  insert(iobj, ln);
-
-  return;
+  return insert(iobj, ln);
 }
 
-void DVPTree::insert(InsertContainer &iobj, LeafNode *leafNode) {
+NGT::ObjectID DVPTree::insert(InsertContainer &iobj, LeafNode *leafNode) {
   LeafNode &leaf = *leafNode;
   size_t fsize   = leaf.getObjectSize();
   if (fsize != 0) {
@@ -112,7 +111,7 @@ void DVPTree::insert(InsertContainer &iobj, LeafNode *leafNode) {
           if (loid == iobj.id) {
             std::cerr << "LeafNode::insert: Warning! already existed. " << iobj.id << std::endl;
           }
-          return;
+          return loid;
         }
       }
     }
@@ -124,7 +123,7 @@ void DVPTree::insert(InsertContainer &iobj, LeafNode *leafNode) {
     insertObject(iobj, leaf);
   }
 
-  return;
+  return 0;
 }
 Node::ID DVPTree::split(InsertContainer &iobj, LeafNode &leaf) {
   Node::Objects *fs = getObjects(leaf, iobj);

@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -473,6 +474,7 @@ class ObjectRepository : public Repository<Object> {
   void setSparse() { sparse = true; }
   void setInnerProduct() { innerProduct = true; }
   size_t getByteSize() { return byteSize; }
+  size_t getPaddedByteSize() { return paddedByteSize; }
   size_t insert(PersistentObject *obj) { return Parent::insert(obj); }
   size_t insert(size_t id, PersistentObject *obj) { return Parent::insert(id, obj); }
   const size_t dimension;

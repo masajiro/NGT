@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2021 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -573,7 +574,6 @@ void QBG::HierarchicalKmeans::multiLayerClustering(QBG::Index &index, std::strin
     auto &objectSpace = quantizer.globalCodebookIndex.getObjectSpace();
     uint32_t id       = 1;
     int32_t cid;
-    size_t ccount = 0;
     while (objectIDs >> cid) {
       std::cerr << cid << std::endl;
       if (id % 100000 == 0) {
@@ -583,7 +583,6 @@ void QBG::HierarchicalKmeans::multiLayerClustering(QBG::Index &index, std::strin
         continue;
       }
       if (cid == clusterID) {
-        ccount++;
         hierarchicalKmeans(id, rootID, object, objectList, objectSpace, nodes, clustering, maxSize);
       }
       id++;

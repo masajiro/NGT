@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -80,7 +81,6 @@ class GraphReconstructor {
         node.resize(rStartRank);
       }
     }
-    size_t removeCount = 0;
     for (size_t rank = rStartRank;; rank++) {
       bool edge = false;
       Timer timer;
@@ -138,8 +138,6 @@ class GraphReconstructor {
 #else
             tn.push_back(NGT::ObjectDistance(node[rank].id, node[rank].distance));
 #endif
-          } else {
-            removeCount++;
           }
         } catch (NGT::Exception &err) {
           std::cerr << "GraphReconstructor: Warning. Cannot get the node. ID=" << id << ":" << err.what()
@@ -156,9 +154,9 @@ class GraphReconstructor {
 #endif // NGT_SHARED_MEMORY_ALLOCATOR
   }
 
-  static void adjustPathsEffectively(NGT::Index &outIndex, size_t minNoOfEdges = 0) {
+  static void adjustPathsEffectively(NGT::Index &outIndex, size_t minNoOfEdges = 0, float range = 1.0) {
     NGT::GraphIndex &outGraph = dynamic_cast<NGT::GraphIndex &>(outIndex.getIndex());
-    adjustPathsEffectively(outGraph, minNoOfEdges);
+    adjustPathsEffectively(outGraph, minNoOfEdges, range);
   }
 
   static bool edgeComp(NGT::ObjectDistance a, NGT::ObjectDistance b) {
@@ -197,7 +195,8 @@ class GraphReconstructor {
   }
 #endif
 
-  static void adjustPathsEffectively(NGT::GraphIndex &outGraph, size_t minNoOfEdges) {
+  static void adjustPathsEffectively(NGT::GraphIndex &outGraph, size_t minNoOfEdges,
+                                     float shortcutReductionRange) {
     Timer timer;
     timer.start();
     std::vector<NGT::GraphNode> tmpGraph;
@@ -271,23 +270,26 @@ class GraphReconstructor {
 #endif
             auto dstNode = neighbors.find(dstNodeID);
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR)
-            if (dstNode != neighbors.end() &&
-                srcNode.at(sni, outGraph.repository.allocator).distance < (*dstNode).second.second &&
-                pathNode.at(pni, outGraph.repository.allocator).distance < (*dstNode).second.second) {
+            if (dstNode != neighbors.end()) {
+              float threshold = (*dstNode).second.second * shortcutReductionRange;
+              if (srcNode.at(sni, outGraph.repository.allocator).distance < threshold &&
+                  pathNode.at(pni, outGraph.repository.allocator).distance < threshold) {
 #else
-            if (dstNode != neighbors.end() && srcNode[sni].distance < (*dstNode).second.second &&
-                pathNode[pni].distance < (*dstNode).second.second) {
+            if (dstNode != neighbors.end()) {
+              float threshold = (*dstNode).second.second * shortcutReductionRange;
+              if (srcNode[sni].distance < threshold && pathNode[pni].distance < threshold) {
 #endif
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR)
-              candidates.push_back(std::pair<uint32_t, std::pair<uint32_t, uint32_t>>(
-                  (*dstNode).second.first,
-                  std::pair<uint32_t, uint32_t>(srcNode.at(sni, outGraph.repository.allocator).id,
-                                                dstNodeID)));
+                candidates.push_back(std::pair<uint32_t, std::pair<uint32_t, uint32_t>>(
+                    (*dstNode).second.first,
+                    std::pair<uint32_t, uint32_t>(srcNode.at(sni, outGraph.repository.allocator).id,
+                                                  dstNodeID)));
 #else
-              candidates.push_back(std::pair<uint32_t, std::pair<uint32_t, uint32_t>>(
-                  (*dstNode).second.first, std::pair<uint32_t, uint32_t>(srcNode[sni].id, dstNodeID)));
+                candidates.push_back(std::pair<uint32_t, std::pair<uint32_t, uint32_t>>(
+                    (*dstNode).second.first, std::pair<uint32_t, uint32_t>(srcNode[sni].id, dstNodeID)));
 #endif
-              removeCandidateCount++;
+                removeCandidateCount++;
+              }
             }
           }
         }
@@ -315,7 +317,6 @@ class GraphReconstructor {
       ids.push_back(idx + 1);
     }
 
-    int removeCount      = 0;
     removeCandidateCount = 0;
     for (size_t rank = 0; ids.size() != 0; rank++) {
       for (auto it = ids.begin(); it != ids.end();) {
@@ -374,7 +375,6 @@ class GraphReconstructor {
               }
             }
             if (pathExist) {
-              removeCount++;
               it++;
               continue;
             }

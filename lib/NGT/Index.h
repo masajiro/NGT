@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -606,6 +607,16 @@ class Index {
   static void remove(const std::string &database, std::vector<ObjectID> &objects, bool force = false);
   static void exportIndex(const std::string &database, const std::string &file);
   static void importIndex(const std::string &database, const std::string &file);
+#ifdef NGT_FOREST
+  static void buildForest(const std::string &targetPath, const std::string &anngPath, size_t clusterSize,
+                          float clusterSizeFactor, const std::string &mode, const std::string &emode,
+                          size_t incomingEdge, size_t outgoingEdge, size_t incomingExternalEdge,
+                          size_t outgoingExternalEdge, float epsilon, size_t nOfHops, size_t nOfEdgesForHop,
+                          char clusterExpansion);
+#endif
+#ifdef NGT_ADVANCED_FOREST
+  static void buildAdvancedForest(const std::string &indexPath, char mode, size_t seedSize, bool rebuildTree);
+#endif
   virtual void load(const std::string &ifile, size_t dataSize) { getIndex().load(ifile, dataSize); }
   virtual void append(const std::string &ifile, size_t dataSize) { getIndex().append(ifile, dataSize); }
   template <typename T>
@@ -1323,7 +1334,10 @@ class GraphIndex : public Index, public NeighborhoodGraph {
   virtual void searchForNNGInsertion(Object &po, ObjectDistances &result) {
     NGT::SearchContainer sc(po);
     sc.setResults(&result);
-    sc.size                   = NeighborhoodGraph::property.edgeSizeForCreation;
+    sc.size =
+        NeighborhoodGraph::property.searchMultiplier <= 1.0
+            ? NeighborhoodGraph::property.edgeSizeForCreation
+            : NeighborhoodGraph::property.edgeSizeForCreation * NeighborhoodGraph::property.searchMultiplier;
     sc.radius                 = FLT_MAX;
     sc.explorationCoefficient = NeighborhoodGraph::property.insertionRadiusCoefficient;
     sc.insertion              = true;
@@ -1376,12 +1390,10 @@ class GraphIndex : public Index, public NeighborhoodGraph {
     Object &po = *fr[id];
 #endif
     ObjectDistances rs;
-    if (NeighborhoodGraph::property.graphType == NeighborhoodGraph::GraphTypeANNG ||
-        NeighborhoodGraph::property.graphType == NeighborhoodGraph::GraphTypeIANNG ||
-        NeighborhoodGraph::property.graphType == NeighborhoodGraph::GraphTypeRANNG) {
-      searchForNNGInsertion(po, rs);
-    } else {
+    if (NeighborhoodGraph::property.graphType == NeighborhoodGraph::GraphTypeKNNG) {
       searchForKNNGInsertion(po, id, rs);
+    } else {
+      searchForNNGInsertion(po, rs);
     }
     insertNode(id, rs);
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
@@ -1713,7 +1725,16 @@ class GraphIndex : public Index, public NeighborhoodGraph {
         (*searchUnupdatableGraph)(*this, sc, seeds);
 #endif
       } else {
-        NeighborhoodGraph::search(sc, seeds);
+        if (NeighborhoodGraph::property.searchTraceRatio <= 0.0) {
+          NeighborhoodGraph::search(sc, seeds);
+        } else if (NeighborhoodGraph::property.searchTraceRatio < 10000.0) {
+          NeighborhoodGraph::searchWithTrace(sc, seeds);
+        } else {
+          auto searchTraceRatioBup                     = NeighborhoodGraph::property.searchTraceRatio;
+          NeighborhoodGraph::property.searchTraceRatio = 0.0f;
+          NeighborhoodGraph::searchWithTrace(sc, seeds);
+          NeighborhoodGraph::property.searchTraceRatio = searchTraceRatioBup;
+        }
       }
     } catch (Exception &err) {
       Exception e(err);
@@ -1821,12 +1842,10 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
     for (size_t i = 1; i < repo.size(); i++) {
       uncopiedObjects.insert(i);
     }
-    size_t copycount = 0;
     while (!uncopiedObjects.empty()) {
       size_t startID = *uncopiedObjects.begin();
       if (startID == order[startID - 1].first) {
         uncopiedObjects.erase(startID);
-        copycount++;
         continue;
       }
       size_t id = startID;
@@ -1834,29 +1853,23 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
       uncopiedObjects.erase(id);
       do {
         space.copy(*object[id], *object[order[id - 1].first]);
-        copycount++;
         id = order[id - 1].first;
         uncopiedObjects.erase(id);
       } while (order[id - 1].first != startID);
       space.copy(*object[id], *tmp);
-      copycount++;
     }
     space.deleteObject(tmp);
-
-    assert(copycount == repo.size() - 1);
 
     sort(order.begin(), order.end());
     uncopiedObjects.clear();
     for (size_t i = 1; i < repo.size(); i++) {
       uncopiedObjects.insert(i);
     }
-    copycount = 0;
     Object *tmpPtr;
     while (!uncopiedObjects.empty()) {
       size_t startID = *uncopiedObjects.begin();
       if (startID == order[startID - 1].second) {
         uncopiedObjects.erase(startID);
-        copycount++;
         continue;
       }
       size_t id = startID;
@@ -1864,14 +1877,11 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
       uncopiedObjects.erase(id);
       do {
         object[id] = object[order[id - 1].second];
-        copycount++;
-        id = order[id - 1].second;
+        id         = order[id - 1].second;
         uncopiedObjects.erase(id);
       } while (order[id - 1].second != startID);
       object[id] = tmpPtr;
-      copycount++;
     }
-    assert(copycount == repo.size() - 1);
   }
 #endif // NGT_SHARED_MEMORY_ALLOCATOR
 
@@ -2075,7 +2085,10 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
   void searchForNNGInsertion(Object &po, ObjectDistances &result) {
     NGT::SearchContainer sc(po);
     sc.setResults(&result);
-    sc.size                   = NeighborhoodGraph::property.edgeSizeForCreation;
+    sc.size =
+        NeighborhoodGraph::property.searchMultiplier <= 1.0
+            ? NeighborhoodGraph::property.edgeSizeForCreation
+            : NeighborhoodGraph::property.edgeSizeForCreation * NeighborhoodGraph::property.searchMultiplier;
     sc.radius                 = FLT_MAX;
     sc.explorationCoefficient = NeighborhoodGraph::property.insertionRadiusCoefficient;
     sc.useAllNodesInLeaf      = true;
@@ -2109,12 +2122,10 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
     Object &po = *fr[id];
 #endif
     ObjectDistances rs;
-    if (NeighborhoodGraph::property.graphType == NeighborhoodGraph::GraphTypeANNG ||
-        NeighborhoodGraph::property.graphType == NeighborhoodGraph::GraphTypeIANNG ||
-        NeighborhoodGraph::property.graphType == NeighborhoodGraph::GraphTypeRANNG) {
-      searchForNNGInsertion(po, rs);
-    } else {
+    if (NeighborhoodGraph::property.graphType == NeighborhoodGraph::GraphTypeKNNG) {
       searchForKNNGInsertion(po, id, rs);
+    } else {
+      searchForNNGInsertion(po, rs);
     }
 
     GraphIndex::insertNode(id, rs);

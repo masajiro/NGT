@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2015 Yahoo Japan Corporation
+// Copyright (C) 2026 Masajiro Iwasaki
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,9 +31,7 @@ using namespace std;
 #endif
 #endif
 
-#if defined(NGT_CLUSTER_NO_AVX)
-#warning "*** SIMD is *NOT* available! ***"
-#else
+#if !defined(NGT_CLUSTER_NO_AVX)
 #include <immintrin.h>
 #endif
 
@@ -465,10 +464,8 @@ class Clustering {
   }
 
   static void moveFartherObjectsToEmptyClusters(std::vector<Cluster> &clusters) {
-    size_t emptyClusterCount = 0;
     for (auto cit = clusters.begin(); cit != clusters.end(); ++cit) {
       if ((*cit).members.size() == 0) {
-        emptyClusterCount++;
         double max = -DBL_MAX;
         auto maxit = clusters.begin();
         for (auto scit = clusters.begin(); scit != clusters.end(); ++scit) {
@@ -488,12 +485,6 @@ class Clustering {
         (*cit).members.push_back((*maxit).members.back());
         (*cit).members.back().centroidID = distance(clusters.begin(), cit);
         (*maxit).members.pop_back();
-      }
-    }
-    emptyClusterCount = 0;
-    for (auto cit = clusters.begin(); cit != clusters.end(); ++cit) {
-      if ((*cit).members.size() == 0) {
-        emptyClusterCount++;
       }
     }
   }
@@ -633,10 +624,8 @@ class Clustering {
   }
 
   static double calculateCentroid(std::vector<std::vector<float>> &vectors, std::vector<Cluster> &clusters) {
-    double distance    = 0;
-    size_t memberCount = 0;
+    double distance = 0;
     for (auto it = clusters.begin(); it != clusters.end(); ++it) {
-      memberCount += (*it).members.size();
       if ((*it).members.size() != 0) {
         std::vector<float> mean(vectors[0].size(), 0.0);
         for (auto memit = (*it).members.begin(); memit != (*it).members.end(); ++memit) {
@@ -863,10 +852,11 @@ class Clustering {
   }
 
   static double calculateMSE(std::vector<std::vector<float>> &vectors, std::vector<Cluster> &clusters) {
-    double mse   = 0.0;
-    size_t count = 0;
+    double mse = 0.0;
     for (auto cit = clusters.begin(); cit != clusters.end(); ++cit) {
+#ifndef NDEBUG
       count += (*cit).members.size();
+#endif
       for (auto mit = (*cit).members.begin(); mit != (*cit).members.end(); ++mit) {
         mse += meanSumOfSquares((*cit).centroid, vectors[(*mit).vectorID]);
       }
@@ -880,11 +870,9 @@ class Clustering {
     size_t count = 0;
     for (auto cit = clusters.begin(); cit != clusters.end(); ++cit) {
       count += (*cit).members.size();
-      double localD = 0.0;
       for (auto mit = (*cit).members.begin(); mit != (*cit).members.end(); ++mit) {
         double distance = distanceL2((*cit).centroid, vectors[(*mit).vectorID]);
         d += distance;
-        localD += distance;
       }
     }
     if (vectors.size() != count) {
@@ -897,11 +885,9 @@ class Clustering {
   static double calculateML2FromSpecifiedCentroids(std::vector<std::vector<float>> &vectors,
                                                    std::vector<Cluster> &clusters,
                                                    std::vector<size_t> &centroidIds) {
-    double d     = 0.0;
-    size_t count = 0;
+    double d = 0.0;
     for (auto it = centroidIds.begin(); it != centroidIds.end(); ++it) {
       Cluster &cluster = clusters[(*it)];
-      count += cluster.members.size();
       for (auto mit = cluster.members.begin(); mit != cluster.members.end(); ++mit) {
         d += distanceL2(cluster.centroid, vectors[(*mit).vectorID]);
       }
